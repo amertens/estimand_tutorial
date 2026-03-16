@@ -23,7 +23,7 @@ suppressPackageStartupMessages({
 expand_person_period <- function(dat, tau = 180, covars = NULL) {
   if (is.null(covars)) {
     covars <- c("age", "sex_male", "ckd", "cirrhosis", "diabetes",
-                "hypertension", "hiv", "bmi")
+                "hypertension", "heart_failure", "nsaid", "acearb", "statin")
   }
   # keep only covars that exist in dat
 
@@ -61,7 +61,7 @@ expand_person_period <- function(dat, tau = 180, covars = NULL) {
 #' @return list with hr, ci, and survival curves.
 fit_cox_naive <- function(dat, tau = 180,
                           covars = c("age", "ckd", "cirrhosis", "diabetes",
-                                     "hiv")) {
+                                     "heart_failure")) {
   covars <- intersect(covars, names(dat))
   
   ## restricts follow-up time to tau days (follow up time is administratively censored at 180)
@@ -150,7 +150,8 @@ fit_cox_censor_switch <- function(dat, tau = 180,
 #' @return list with wide data.frame, Y_cols, C_cols.
 prepare_lmtp_data <- function(dat, tau = 180,
                               baseline = c("age", "sex_male", "ckd",
-                                           "diabetes", "hypertension")) {
+                                           "diabetes", "hypertension",
+                                           "heart_failure")) {
   baseline <- intersect(baseline, names(dat))
 
   dat <- dat %>%

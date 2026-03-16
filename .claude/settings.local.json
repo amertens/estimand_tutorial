@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"C:\\\\Users\\\\andre\\\\OneDrive\\\\Documents\\\\estimand_tutorial\\\\results\"\" 2>/dev/null || echo \"No results directory \")"
+    ]
+  }
+}

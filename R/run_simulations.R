@@ -34,7 +34,7 @@ run_one_iter <- function(i, sample_size = 1000, tau = 180,
   dat <- do.call(generate_hcv_data, args)
 
   covars <- intersect(
-    c("age", "ckd", "cirrhosis", "diabetes", "hiv"),
+    c("age", "ckd", "cirrhosis", "diabetes", "heart_failure"),
     names(dat)
   )
 

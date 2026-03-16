@@ -14,22 +14,21 @@ source("DGP.R")
 
 set.seed(12345)
 
-
+# With switch_on=FALSE and dep_censor=FALSE, there is no switching and no
+# random censoring (only admin max_follow), so potential outcomes are clean.
 df_complex_A1 <- generate_hcv_data(        N               = 1000000,
                                            np_hazard     = TRUE,
-                                    dep_censor    = TRUE,
+                                    dep_censor    = FALSE,
                                     complexity    = TRUE,
                                     switch_on = FALSE,
-                                    censor_base = 0.00000000000000000000000000001, #need to update to allow no cens
                                     treat_override  = "all_treated",
                                     seed=1234)
 
 df_complex_A0 <- generate_hcv_data(     N               = 1000000,
                                         np_hazard     = TRUE,
-                                       dep_censor    = TRUE,
+                                       dep_censor    = FALSE,
                                        complexity    = TRUE,
                                        switch_on = FALSE,
-                                       censor_base = 0.00000000000000000000000000001,
                                        treat_override  = "all_control",
                                        seed=1234)
 

@@ -14,3 +14,10 @@ knitr
 data.table
 dagitty
 ggdag
+lmtp
+nnls
+foreach
+gam
+SuperLearner
+future
+broom
