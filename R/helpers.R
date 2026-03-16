@@ -63,6 +63,8 @@ fit_cox_naive <- function(dat, tau = 180,
                           covars = c("age", "ckd", "cirrhosis", "diabetes",
                                      "hiv")) {
   covars <- intersect(covars, names(dat))
+  
+  ## restricts follow-up time to tau days (follow up time is administratively censored at 180)
   dat <- dat %>%
     mutate(time_use = pmin(follow_time, tau),
            event_use = as.integer(event == 1 & follow_time <= tau))
@@ -229,6 +231,7 @@ run_lmtp_analysis <- function(lmtp_prep, folds = 2,
     contrast_rd = contrast_rd
   )
 }
+
 
 
 # ── Marginal risk from KM ────────────────────────────────────────────────────

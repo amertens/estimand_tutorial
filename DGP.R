@@ -138,6 +138,13 @@ generate_hcv_data <- function(
 
   ##--------------------------------------------------------------------------
   ## 8. Treatment‑switch censoring -------------------------------------------
+  ## If switch_on==FALSE,switching is crude, we still have censor_switch time as
+  # trt days + risk window i.e. switching is not informative
+  
+  # Otherwise: switching is informative and time to switch is modeled with its own hazard that depends on trt and CKD
+  # So days on trt are a function of the switching hazard, a person switches if their trt days are less than max follow-up
+  # and censoring_switch time is the min of tx_days+ risk_window & max_follow
+  
   if (!switch_on) {
     cohort$tx_days <- ifelse(cohort$treatment == 1,
                              rpois(nrow(cohort), 84), rpois(nrow(cohort), 70))
@@ -157,6 +164,8 @@ generate_hcv_data <- function(
 
   ##--------------------------------------------------------------------------
   ## 9. Observed follow‑up & event indicator ---------------------------------
+  
+  ## Already includes switching as a censoring time
   cohort$follow_time <- pmin(cohort$event_time,
                              cohort$censor_admin,
                              cohort$censor_switch)

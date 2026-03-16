@@ -6,8 +6,12 @@ format: html
 
 <!--
 TODO(Joy): verify exact variable mapping from DGP.R to chapter notation.
+verified
 TODO(Joy): confirm archived Cox script chosen here is the preferred baseline implementation.
+
 TODO(Joy): replace placeholder intervention function with the final study-specific rule if needed.
+
+
 TODO(Joy): optionally add one small real-data-inspired paragraph if there is a project-approved example to mention.
 -->
 
@@ -75,8 +79,8 @@ We use the project's `DGP.R` to generate realistic post-marketing safety data. T
 
 | DGP Component | Description |
 |---|---|
-| **Baseline covariates** | Age, sex, race, region, CKD, cirrhosis, HIV, diabetes, hypertension, BMI, concomitant medications (NSAIDs, ACE/ARBs, diuretics, aminoglycosides, contrast agents, statins) |
-| **Treatment assignment** | SOF vs. non-SOF, with confounding by CKD, cirrhosis, HIV, age, and (when `complexity=TRUE`) nonlinear covariate interactions |
+| **Baseline covariates** | Demography (Age, sex, race, region, enroll_days?? ), clinical history ( prior AKI, heart failure,sepsis,  obstruction, CKD, cirrhosis, portal_htn??, esld??, HIV, diabetes, hypertension, cancer, BMI, overweight_obese??, smoking, alcohol, substance use), concomitant medications (NSAIDs, ACE/ARBs, diuretics, aminoglycosides, contrast agents, statins, aspirin, beta blockers, ccb, ART, chemotherapy) ,|
+| **Treatment assignment** | SOF vs. non-SOF, with confounding by CKD, cirrhosis, HIV, age, cancer, diabetes, BMI and (when `complexity=TRUE`) nonlinear covariate interactions |
 | **Event process** | Piecewise exponential AKI hazard; when `np_hazard=TRUE`, HR = 1.25 early (before `tau` days) and HR = 0.70 late |
 | **Switching process** | Hazard-based informative switching driven by treatment and CKD; when `switch_on=TRUE`, switching is a competing process |
 | **Censoring process** | Administrative censoring; when `dep_censor=TRUE`, censoring depends on baseline risk |
@@ -158,9 +162,13 @@ Rather than comparing all five ICH E9(R1) strategies against each other, we focu
 
 <!-- TODO(Joy): decide whether to retain the optional while-on-treatment subsection -->
 
+<!-- JOY:  I think its good to retain because its also a clinically relevant estimand. Was done in the primary study analysis and so good to demonstrate how best and when to or not to go after it (How can weighting help reduce the bias (model the switching hazard)) -->
+
 ::: {.callout-note}
 ## Optional: While-on-Treatment Estimand
-A third estimand---while-on-treatment---censors at the time of switching and counts only events occurring before any switch. We include it below as a negative example: when switching is informative, this estimand is particularly susceptible to bias from naive implementation.
+A third estimand---while-on-treatment---censors at the time of switching and counts only events occurring before any switch. We include it below as a negative example: when switching is informative, this estimand is particularly susceptible to bias from naive implementation. 
+
+<!-- JOY This estimand fundamentally seeks to answer the question, what is the effect of drug A vs B on the risk of badness for my patients while they take it for the time they are able to take it while the hypothetical estimand asks what would the effect of drug A vs drug B be if vereyine completed the intened full course of therapy ie everyone was able to tolerate to the end -->
 :::
 
 ## Conventional Regression Analyses
@@ -187,8 +195,12 @@ cat("95% CI:", round(cox_naive$ci_low, 3), "-",
 
 Furthermore, because the DGP includes informative switching that alters the risk set over time, the naive Cox model's risk set at later time points is a selected subset of the original cohort---specifically, it excludes patients who switched (and were subsequently censored by the DGP). This means the naive Cox model is not purely an intent-to-treat analysis either; it is a hybrid that neither cleanly ignores switching nor properly adjusts for it.
 
+<!-- JOY : if we ignore switching and go after the ITT, that means switching is not treated as a censoring event i.e an individual still contributes to the risk set until event time/ max follow_up. I guess i am not super clear about how this alters the risk set over time. I later got to see that the way the DGP, is generated, it already includes switching as a censoring event. I wonder though if there is another way we can estimate the ITT? I have some thoughts.  -->
+
 ### B. Hypothetical Estimand: Cox Model Censoring at Switch
 
+<!-- JOY : Is the cox model analogy of the hypothetical estimand censor at switching ?
+YES: Conceptually, we would estimate the hypothetical estimand and while on trt estimand the same way using a cox regression.  With the assumption that switching is non informative. if switching is informative, both these are biased -->
 For the hypothetical no-switch estimand, a common approach is to censor patients at the time of switching and fit a Cox model on the remaining person-time.
 
 ```{r}
@@ -201,7 +213,9 @@ cat("95% CI:", round(cox_cs$ci_low, 3), "-",
     round(cox_cs$ci_high, 3), "\n")
 ```
 
-**Why this is biased under informative switching:** Censoring at switch assumes that switching is non-informative conditional on the covariates included in the model. In our DGP, switching is driven by CKD and treatment---both of which are in the model---but the switching hazard also interacts with other evolving risk factors. When high-risk patients (CKD, on SOF) preferentially switch, censoring them removes the highest-risk person-time from the SOF arm, making SOF appear safer than it actually is. The resulting HR is biased toward the null.
+**Why this is biased under informative switching:** Censoring at switch assumes that switching is non-informative conditional on the covariates included in the model. In our DGP, switching is driven by CKD and treatment---both of which are in the model---but the switching hazard also interacts with other evolving risk factors. When high-risk patients (CKD, on SOF) preferentially switch, censoring then removes the highest-risk person-time from the SOF arm, making SOF appear safer than it actually is. The resulting HR is biased toward the null.
+
+<!--JOY Time dependent confounding issue here as well??-->
 
 More fundamentally, the Cox model targets a conditional hazard ratio, not the marginal risk contrast that defines the hypothetical estimand. Even if the censoring-at-switch were non-informative, the HR would not equal the target $\psi^{HYP}$.
 
@@ -229,10 +243,14 @@ The `lmtp` package implements longitudinal modified treatment policies via the s
 
 <!-- TODO(Joy): verify that the intervention function in lmtp matches the intended estimand definition -->
 
+
+
 ### Preparing Data for LMTP
 
 The `lmtp` package requires wide-format data with outcome and censoring indicators at each time point. We use `prepare_lmtp_data()` from our helper script, which adapts the logic from `archive/lmtp_aki_analysis.R`.
 
+
+<!-- JOY Baseline: Are these covariates to be adjusted for?-->
 ```{r}
 #| label: lmtp-prep
 #| cache: true
@@ -271,13 +289,26 @@ lmtp_res <- run_lmtp_analysis(lmtp_prep, folds = 2,
 cat("LMTP risk (SOF):", round(lmtp_res$risk_trt, 5), "\n")
 cat("LMTP risk (non-SOF):", round(lmtp_res$risk_ctrl, 5), "\n")
 
-rd <- lmtp_res$contrast_rd$vals
-cat("LMTP risk difference:", round(rd$theta, 5), "\n")
+
+
+# rd <- lmtp_res$contrast_rd$vals
+# cat("LMTP risk difference:", round(rd$theta, 5), "\n")
+# cat("LMTP RD 95% CI:", round(rd$conf.low, 5), "-",
+#     round(rd$conf.high, 5), "\n")
+# 
+# rr <- lmtp_res$contrast_rr$vals
+# cat("LMTP risk ratio:", round(rr$theta, 4), "\n")
+
+
+rd <- lmtp_res$contrast_rd$estimates
+cat("LMTP risk difference:", round(rd$estimate, 5), "\n")
 cat("LMTP RD 95% CI:", round(rd$conf.low, 5), "-",
     round(rd$conf.high, 5), "\n")
 
-rr <- lmtp_res$contrast_rr$vals
-cat("LMTP risk ratio:", round(rr$theta, 4), "\n")
+rr <- lmtp_res$contrast_rr$estimates
+cat("LMTP risk ratio:", round(rr$estimate, 4), "\n")
+cat("LMTP RR 95% CI:", round(rr$conf.low, 5), "-",
+    round(rr$conf.high, 5), "\n")
 ```
 
 ## Estimand-Estimator Comparison
@@ -301,6 +332,28 @@ kable(conceptual_tbl, format = "pipe")
 #| label: tbl-numerical
 #| tbl-cap: "Numerical estimates: conventional regression vs. LMTP"
 
+# numerical_tbl <- tibble::tribble(
+#   ~Estimand, ~Method, ~`Scale`, ~Estimate, ~`95% CI`,
+#   "Treatment-policy", "Naive Cox (ignore switch)", "HR",
+#     round(cox_naive$hr, 3),
+#     paste0(round(cox_naive$ci_low, 3), " - ", round(cox_naive$ci_high, 3)),
+#   "Treatment-policy", "KM risk diff (unadjusted)", "RD",
+#     round(km_naive$risk_diff, 5), "---",
+#   "Treatment-policy", "LMTP SDR", "RD",
+#     round(rd$theta, 5),
+#     paste0(round(rd$conf.low, 5), " - ", round(rd$conf.high, 5)),
+#   "Hypothetical (no-switch)", "Cox censor at switch", "HR",
+#     round(cox_cs$hr, 3),
+#     paste0(round(cox_cs$ci_low, 3), " - ", round(cox_cs$ci_high, 3)),
+#   "Hypothetical (no-switch)", "KM risk diff (censor at switch)", "RD",
+#     round(km_cs$risk_diff, 5), "---",
+#   "Hypothetical (no-switch)", "LMTP SDR", "RD",
+#     round(rd$theta, 5),
+#     paste0(round(rd$conf.low, 5), " - ", round(rd$conf.high, 5))
+# )
+# 
+# kable(numerical_tbl, format = "pipe")
+
 numerical_tbl <- tibble::tribble(
   ~Estimand, ~Method, ~`Scale`, ~Estimate, ~`95% CI`,
   "Treatment-policy", "Naive Cox (ignore switch)", "HR",
@@ -309,7 +362,7 @@ numerical_tbl <- tibble::tribble(
   "Treatment-policy", "KM risk diff (unadjusted)", "RD",
     round(km_naive$risk_diff, 5), "---",
   "Treatment-policy", "LMTP SDR", "RD",
-    round(rd$theta, 5),
+    round(rd$estimate, 5),
     paste0(round(rd$conf.low, 5), " - ", round(rd$conf.high, 5)),
   "Hypothetical (no-switch)", "Cox censor at switch", "HR",
     round(cox_cs$hr, 3),
@@ -317,11 +370,14 @@ numerical_tbl <- tibble::tribble(
   "Hypothetical (no-switch)", "KM risk diff (censor at switch)", "RD",
     round(km_cs$risk_diff, 5), "---",
   "Hypothetical (no-switch)", "LMTP SDR", "RD",
-    round(rd$theta, 5),
+    round(rd$estimate, 5),
     paste0(round(rd$conf.low, 5), " - ", round(rd$conf.high, 5))
 )
 
 kable(numerical_tbl, format = "pipe")
+
+
+
 ```
 
 ::: {.callout-important}
@@ -369,8 +425,8 @@ truth_a0 <- generate_hcv_data(
 )
 
 # True 180-day risks
-true_risk_1 <- mean(truth_a1$event == 1 & truth_a1$follow_time <= tau)
-true_risk_0 <- mean(truth_a0$event == 1 & truth_a0$follow_time <= tau)
+true_risk_1 <- mean(truth_a1$event == 1 & truth_a1$follow_time <= tau) #P(T_1<=tau)
+true_risk_0 <- mean(truth_a0$event == 1 & truth_a0$follow_time <= tau) #P(T_0<=tau)
 true_rd <- true_risk_1 - true_risk_0
 true_rr <- true_risk_1 / true_risk_0
 

@@ -81,7 +81,7 @@ We use the project's `DGP.R` to generate realistic post-marketing safety data. T
 
 | DGP Component | Description |
 |---|---|
-| **Baseline covariates** | Age, sex, race, region, CKD, cirrhosis, HIV, diabetes, hypertension, BMI, concomitant medications (NSAIDs, ACE/ARBs, diuretics, aminoglycosides, contrast agents, statins) |
+| **Baseline covariates** | Demography (Age, sex, race, region, enroll_days?? )| Clinical history ( prior AKI, heart failure,sepsis, obstruction,obstruction CKD, cirrhosis, HIV, diabetes, hypertension, BMI, concomitant medications (NSAIDs, ACE/ARBs, diuretics, aminoglycosides, contrast agents, statins,aspirin, beta blockers,ccb,ART,chemotherapy) ,|
 | **Treatment assignment** | SOF vs. non-SOF, with confounding by CKD, cirrhosis, HIV, age, and (when `complexity=TRUE`) nonlinear covariate interactions |
 | **Event process** | Piecewise exponential AKI hazard; when `np_hazard=TRUE`, HR = 1.25 early (before `tau` days) and HR = 0.70 late |
 | **Switching process** | Hazard-based informative switching driven by treatment and CKD; when `switch_on=TRUE`, switching is a competing process |
