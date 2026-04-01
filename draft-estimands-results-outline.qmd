@@ -635,6 +635,30 @@ This tutorial does not implement a full sensitivity analysis, but the causal roa
 <!-- TODO(Joy): implement a nonparametric sensitivity analysis function and
      add a worked example to the simulation study. -->
 
+## Continuous-Time TMLE as an Alternative
+
+The `lmtp` analyses in this tutorial discretise the 180-day follow-up into weekly bins, creating ~26 outcome and censoring columns per subject. This is a pragmatic choice that trades temporal resolution for computational feasibility, but it raises a legitimate concern: discretisation has been shown to affect estimator performance, and the choice of bin width is itself a tuning parameter that can influence results (Rytgaard et al. 2023).
+
+The `concrete` R package (Chen et al. 2023) implements a continuous-time TMLE that avoids discretisation entirely. It works directly with cause-specific hazards on the continuous time scale, targets cause-specific absolute risks (cumulative incidence) under intervention, and provides simultaneous confidence bands across multiple target times. It also handles competing risks natively---for example, death before renal failure---which the current tutorial does not address.
+
+However, `concrete` is designed for **baseline (point) treatment** interventions only. It cannot currently handle time-varying treatments or longitudinal treatment regimes. Because treatment switching is inherently a time-varying treatment problem---the patient's effective treatment changes at the switch time---`concrete` cannot directly target the treatment-policy or hypothetical no-switch estimands as defined in this tutorial. For an intention-to-treat estimand that compares groups as initially assigned (ignoring switching entirely), `concrete` would be a strong alternative that avoids discretisation artifacts and adds competing risks support.
+
+In summary:
+
+| Feature | `lmtp` | `concrete` |
+|---|---|---|
+| Time scale | Discrete (binned) | Continuous |
+| Treatment type | Time-varying, continuous, binary | Baseline binary only |
+| Switching/ICE handling | Yes (modified treatment policies) | No (point treatment) |
+| Competing risks | No | Yes |
+| Double robustness | Yes (SDR estimator) | Yes (one-step TMLE) |
+
+For the estimands in this tutorial---which are defined by how switching is handled---`lmtp` remains the appropriate choice. A complete analysis might use `concrete` for the baseline-treatment ITT estimand (avoiding discretisation and incorporating competing risks) alongside `lmtp` for the treatment-policy and hypothetical no-switch estimands. Future development of `concrete` for longitudinal treatments could eventually unify these approaches.
+
+<!-- TODO(Joy): consider adding a concrete analysis for the ITT estimand
+     as a comparison. The archive already contains a run_concrete_tmle()
+     wrapper in R/archive_functions.R. -->
+
 ## Key Messages
 
 1. **The main problem is estimand-estimator misalignment.** Analysts often run regression procedures that do not target the stated estimand when intercurrent events are present.
@@ -663,3 +687,5 @@ This tutorial does not implement a full sensitivity analysis, but the causal roa
 - Stensrud MJ, Aalen JM, Aalen OO, Valberg M (2019). Limitations of hazard ratios in clinical trials. European Heart Journal.
 - Rufibach K (2019). Treatment effect quantification for time-to-event endpoints: estimands, analysis strategies, and beyond. Pharmaceutical Statistics.
 - Petersen ML (2014). Applying a causal road map in settings with time-dependent confounding. Epidemiology.
+- Rytgaard HC, Eriksson F, van der Laan MJ (2023). Estimation of time-specific intervention effects on continuously distributed time-to-event outcomes by targeted maximum likelihood estimation. Biometrics, 79(4):3038--3049.
+- Chen D, Rytgaard HC, Fong E, Tarp JM, Petersen ML, van der Laan MJ, Gerds TA (2023). concrete: Targeted estimation of survival and competing risks in continuous time. arXiv:2310.19197.
