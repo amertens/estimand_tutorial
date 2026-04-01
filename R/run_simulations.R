@@ -1,6 +1,12 @@
 # run_simulations.R
-# Repeated simulation study comparing Cox and LMTP estimators within estimands.
-# Adapted from archive/ps_aki_analysis_par.R.
+# Repeated simulation study comparing estimators WITHIN each estimand.
+# For each estimand (treatment-policy and hypothetical no-switch), we fit:
+#   1. Naive Cox HR (baseline treatment only) -- misaligned
+#   2. Cox censoring at switch -- misaligned for treatment-policy; naive for hypothetical
+#   3. Cox with time-dependent treatment -- misaligned
+#   4. LMTP SDR targeting the correct intervention -- aligned
+# We also run three support scenarios (good, strained, poor) to show how
+# estimation degrades with weak positivity.
 
 # TODO(Joy): fill in exact runtime notes after benchmarking.
 
@@ -14,123 +20,145 @@ suppressPackageStartupMessages({
 source(here("DGP.R"))
 source(here("R", "helpers.R"))
 
-# ── Single iteration ─────────────────────────────────────────────────────────
-#' Run one iteration of the simulation study.
+# ── Single iteration for one estimand ────────────────────────────────────────
+#' Run one iteration of the simulation study for a specific estimand.
 #' @param i integer; iteration index.
+#' @param estimand character; "treatment_policy" or "no_switch".
 #' @param sample_size integer; per-iteration sample size.
 #' @param tau integer; follow-up horizon.
 #' @param run_lmtp logical; whether to run LMTP (slow).
-#' @param dgp_args list of additional arguments passed to generate_hcv_data().
-#' @return data.frame with one row of results.
-run_one_iter <- function(i, sample_size = 1000, tau = 180,
-                         run_lmtp = TRUE, dgp_args = list()) {
+#' @param run_cox_td logical; whether to run Cox time-dependent (slow for large N).
+#' @param dgp_args list of additional arguments passed to generate_hep_data().
+#' @return data.frame with one row per method.
+run_one_iter <- function(i, estimand = "treatment_policy",
+                         sample_size = 1000, tau = 180,
+                         run_lmtp = TRUE, run_cox_td = FALSE,
+                         dgp_args = list()) {
   set.seed(1000 + i)
 
-  # Generate fresh data each iteration
+  # Generate data under the appropriate policy
   args <- modifyList(
-    list(N = sample_size, seed = 1000 + i),
+    list(N = sample_size, policy = estimand, seed = 1000 + i),
     dgp_args
   )
-  dat <- do.call(generate_hcv_data, args)
+  dat <- do.call(generate_hep_data, args)
 
   covars <- intersect(
     c("age", "ckd", "cirrhosis", "diabetes", "heart_failure"),
     names(dat)
   )
 
+  results <- list()
+
   # ── A. Naive Cox (ignores switching) ──
-  cox_naive <- tryCatch({
+  results[["cox_naive"]] <- tryCatch({
     fit <- fit_cox_naive(dat, tau = tau, covars = covars)
+    km  <- km_risk_at(fit$survfit, t = tau)
     data.frame(
-      method = "Cox naive (ignore switch)",
-      hr = fit$hr, ci_low = fit$ci_low, ci_high = fit$ci_high,
-      risk_diff = NA_real_, converged = TRUE
+      method = "Cox naive", hr = fit$hr,
+      ci_low = fit$ci_low, ci_high = fit$ci_high,
+      risk_diff = km$risk_diff, converged = TRUE
     )
   }, error = function(e) {
-    data.frame(method = "Cox naive (ignore switch)",
-               hr = NA, ci_low = NA, ci_high = NA,
+    data.frame(method = "Cox naive", hr = NA, ci_low = NA, ci_high = NA,
                risk_diff = NA, converged = FALSE)
   })
 
   # ── B. Cox censor at switch ──
-  cox_censor <- tryCatch({
+  results[["cox_censor"]] <- tryCatch({
     fit <- fit_cox_censor_switch(dat, tau = tau, covars = covars)
+    km  <- km_risk_at(fit$survfit, t = tau)
     data.frame(
-      method = "Cox censor at switch",
-      hr = fit$hr, ci_low = fit$ci_low, ci_high = fit$ci_high,
-      risk_diff = NA_real_, converged = TRUE
+      method = "Cox censor-at-switch", hr = fit$hr,
+      ci_low = fit$ci_low, ci_high = fit$ci_high,
+      risk_diff = km$risk_diff, converged = TRUE
     )
   }, error = function(e) {
-    data.frame(method = "Cox censor at switch",
-               hr = NA, ci_low = NA, ci_high = NA,
-               risk_diff = NA, converged = FALSE)
+    data.frame(method = "Cox censor-at-switch", hr = NA, ci_low = NA,
+               ci_high = NA, risk_diff = NA, converged = FALSE)
   })
 
-  # ── C. LMTP ──
-  lmtp_row <- data.frame(
-    method = "LMTP SDR", hr = NA_real_,
-    ci_low = NA_real_, ci_high = NA_real_,
-    risk_diff = NA_real_, converged = FALSE
-  )
+  # ── C. Cox time-dependent treatment (optional) ──
+  if (run_cox_td) {
+    results[["cox_td"]] <- tryCatch({
+      fit <- fit_cox_td(dat, tau = tau, covars = covars)
+      data.frame(
+        method = "Cox time-dependent", hr = fit$hr,
+        ci_low = fit$ci_low, ci_high = fit$ci_high,
+        risk_diff = NA_real_, converged = TRUE
+      )
+    }, error = function(e) {
+      data.frame(method = "Cox time-dependent", hr = NA, ci_low = NA,
+                 ci_high = NA, risk_diff = NA, converged = FALSE)
+    })
+  }
 
+  # ── D. LMTP SDR ──
   if (run_lmtp) {
-    lmtp_row <- tryCatch({
+    results[["lmtp"]] <- tryCatch({
       requireNamespace("lmtp", quietly = TRUE)
       prep <- prepare_lmtp_data(dat, tau = tau)
       res  <- run_lmtp_analysis(prep, folds = 2, learners = c("SL.glm"))
       rd_est <- res$contrast_rd$vals$theta
-      rd_ci  <- rd_est + c(-1, 1) * 1.96 * res$contrast_rd$vals$std.error
+      rd_se  <- res$contrast_rd$vals$std.error
+      rd_ci  <- rd_est + c(-1, 1) * 1.96 * rd_se
       data.frame(
-        method = "LMTP SDR",
-        hr = NA_real_,
+        method = "LMTP SDR", hr = NA_real_,
         ci_low = rd_ci[1], ci_high = rd_ci[2],
         risk_diff = rd_est, converged = TRUE
       )
     }, error = function(e) {
-      data.frame(method = "LMTP SDR", hr = NA,
-                 ci_low = NA, ci_high = NA,
-                 risk_diff = NA, converged = FALSE)
+      data.frame(method = "LMTP SDR", hr = NA, ci_low = NA,
+                 ci_high = NA, risk_diff = NA, converged = FALSE)
     })
   }
 
-  results <- bind_rows(cox_naive, cox_censor, lmtp_row)
-  results$iter <- i
-  results$n    <- sample_size
-  results
+  out <- bind_rows(results)
+  out$estimand <- estimand
+  out$iter     <- i
+  out$n        <- sample_size
+  out
 }
 
 
-# ── Full simulation runner ────────────────────────────────────────────────────
-#' Run the repeated simulation study.
-#' @param n_iter integer; number of iterations (default 50).
+# ── Full simulation runner ───────────────────────────────────────────────────
+#' Run the repeated simulation study across estimands.
+#' @param n_iter integer; number of iterations (default 200).
 #' @param sample_size integer; sample size per iteration.
 #' @param tau integer; follow-up horizon.
+#' @param estimands character vector; which estimands to run.
 #' @param run_lmtp logical.
-#' @param dgp_args list; extra args for generate_hcv_data().
+#' @param run_cox_td logical.
+#' @param dgp_args list; extra args for generate_hep_data().
 #' @param cache_file character or NULL; path to cache results.
 #' @return data.frame of aggregated results.
-run_simulation_study <- function(n_iter = 50, sample_size = 1000,
-                                 tau = 180, run_lmtp = TRUE,
+run_simulation_study <- function(n_iter = 200, sample_size = 1000,
+                                 tau = 180,
+                                 estimands = c("treatment_policy", "no_switch"),
+                                 run_lmtp = TRUE, run_cox_td = FALSE,
                                  dgp_args = list(),
                                  cache_file = NULL) {
-  # Check cache
-
-if (!is.null(cache_file) && file.exists(cache_file)) {
+  if (!is.null(cache_file) && file.exists(cache_file)) {
     message("Loading cached results from ", cache_file)
     return(readRDS(cache_file))
   }
 
-  message("Running ", n_iter, " simulation iterations...")
+  message("Running ", n_iter, " iterations x ", length(estimands), " estimands...")
   all_res <- NULL
-  for (i in seq_len(n_iter)) {
-    if (i %% 10 == 0) message("  iteration ", i, " / ", n_iter)
-    iter_res <- run_one_iter(i, sample_size = sample_size,
-                             tau = tau, run_lmtp = run_lmtp,
-                             dgp_args = dgp_args)
-    all_res <- bind_rows(all_res, iter_res)
+
+  for (est in estimands) {
+    message("  Estimand: ", est)
+    for (i in seq_len(n_iter)) {
+      if (i %% 25 == 0) message("    iteration ", i, " / ", n_iter)
+      iter_res <- run_one_iter(
+        i, estimand = est, sample_size = sample_size,
+        tau = tau, run_lmtp = run_lmtp, run_cox_td = run_cox_td,
+        dgp_args = dgp_args
+      )
+      all_res <- bind_rows(all_res, iter_res)
+    }
   }
 
-  # Cache
   if (!is.null(cache_file)) {
     dir.create(dirname(cache_file), recursive = TRUE, showWarnings = FALSE)
     saveRDS(all_res, cache_file)
@@ -141,23 +169,72 @@ if (!is.null(cache_file) && file.exists(cache_file)) {
 }
 
 
+# ── Support scenario runner ──────────────────────────────────────────────────
+#' Run estimators under three support scenarios for a given estimand.
+#' @param estimand character; "treatment_policy" or "no_switch".
+#' @param n_iter integer; iterations per scenario.
+#' @param sample_size integer.
+#' @param tau integer.
+#' @param cache_file character or NULL.
+#' @return data.frame with scenario column.
+run_support_scenarios <- function(estimand = "treatment_policy",
+                                  n_iter = 50, sample_size = 2000,
+                                  tau = 180, cache_file = NULL) {
+  if (!is.null(cache_file) && file.exists(cache_file)) {
+    message("Loading cached support results from ", cache_file)
+    return(readRDS(cache_file))
+  }
+
+  scenarios <- list(
+    "Good support" = list(),
+    "Strained support" = list(gamma_A = 1.5, gamma_ckd = 1.2, lambda_sw0 = 5e-5),
+    "Poor support" = list(gamma_A = 2.5, gamma_ckd = 2.0, lambda_sw0 = 1e-4)
+  )
+
+  all_res <- NULL
+  for (sc_name in names(scenarios)) {
+    message("  Scenario: ", sc_name)
+    sc_args <- scenarios[[sc_name]]
+    for (i in seq_len(n_iter)) {
+      if (i %% 10 == 0) message("    iteration ", i, " / ", n_iter)
+      iter_res <- run_one_iter(
+        i, estimand = estimand, sample_size = sample_size,
+        tau = tau, run_lmtp = TRUE, run_cox_td = FALSE,
+        dgp_args = sc_args
+      )
+      iter_res$scenario <- sc_name
+      all_res <- bind_rows(all_res, iter_res)
+    }
+  }
+
+  if (!is.null(cache_file)) {
+    dir.create(dirname(cache_file), recursive = TRUE, showWarnings = FALSE)
+    saveRDS(all_res, cache_file)
+    message("Cached to ", cache_file)
+  }
+
+  all_res
+}
+
+
 # ── Summarize simulation results ─────────────────────────────────────────────
 #' Summarize simulation results: bias, empirical SE, RMSE, coverage.
 #' @param sim_results data.frame from run_simulation_study().
-#' @param truth_rd numeric; true risk difference (for LMTP).
+#' @param truth_rd numeric; true risk difference (for LMTP and KM-based RD).
 #' @param truth_hr numeric; true hazard ratio (for Cox, if known).
-#' @return tibble with summary statistics.
+#' @return tibble with summary statistics grouped by estimand and method.
 summarize_simulation <- function(sim_results, truth_rd = NA, truth_hr = NA) {
   sim_results %>%
-    group_by(method) %>%
+    group_by(estimand, method) %>%
     summarise(
       n_iter       = n(),
       n_converged  = sum(converged, na.rm = TRUE),
-      # HR-based summaries (Cox methods)
+      # HR summaries (Cox methods)
       mean_hr      = mean(hr, na.rm = TRUE),
+      sd_hr        = sd(hr, na.rm = TRUE),
       bias_hr      = if (!is.na(truth_hr)) mean(hr, na.rm = TRUE) - truth_hr
                      else NA_real_,
-      # RD-based summaries (LMTP)
+      # RD summaries (LMTP and KM-based)
       mean_rd      = mean(risk_diff, na.rm = TRUE),
       emp_se_rd    = sd(risk_diff, na.rm = TRUE),
       bias_rd      = if (!is.na(truth_rd)) mean(risk_diff, na.rm = TRUE) - truth_rd

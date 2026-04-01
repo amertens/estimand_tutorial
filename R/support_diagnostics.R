@@ -43,9 +43,9 @@ compute_ps_diagnostics <- function(dat,
 #' @return ggplot object.
 plot_ps_overlap <- function(dat, title = "Propensity Score Distribution") {
   ggplot(dat, aes(x = ps, fill = factor(treatment,
-                                         labels = c("Non-SOF", "SOF")))) +
+                                         labels = c("Comparator", "Active")))) +
     geom_histogram(alpha = 0.5, bins = 60, position = "identity") +
-    labs(x = "P(Treatment = SOF | Baseline)", y = "Count",
+    labs(x = "P(Treatment = Active | Baseline)", y = "Count",
          fill = "Treatment", title = title) +
     theme_minimal(base_size = 12) +
     scale_fill_manual(values = c("steelblue", "tomato"))
@@ -61,7 +61,9 @@ compute_switch_diagnostics <- function(dat,
                                        covars = c("age", "ckd", "treatment",
                                                    "cirrhosis", "diabetes")) {
   covars <- intersect(covars, names(dat))
-  fml <- as.formula(paste("switch ~", paste(covars, collapse = " + ")))
+  # Use the 'switched' column from generate_hep_data()
+  sw_col <- if ("switched" %in% names(dat)) "switched" else "switch"
+  fml <- as.formula(paste(sw_col, "~", paste(covars, collapse = " + ")))
   sw_mod <- glm(fml, data = dat, family = binomial)
   dat$p_switch <- predict(sw_mod, type = "response")
 
@@ -87,16 +89,17 @@ compute_switch_diagnostics <- function(dat,
 compute_natural_compliance <- function(dat) {
   # For static "always treat" intervention: proportion who start on treatment
   # AND do not switch away before tau.
+  sw_col <- if ("switched" %in% names(dat)) "switched" else "switch"
   treat_start <- mean(dat$treatment == 1)
-  treat_no_switch <- mean(dat$treatment == 1 & dat$switch == 0)
+  treat_no_switch <- mean(dat$treatment == 1 & dat[[sw_col]] == 0)
   ctrl_start <- mean(dat$treatment == 0)
-  ctrl_no_switch <- mean(dat$treatment == 0 & dat$switch == 0)
+  ctrl_no_switch <- mean(dat$treatment == 0 & dat[[sw_col]] == 0)
 
  tibble::tibble(
-    intervention = c("Always SOF (no switch)",
-                     "Always non-SOF (no switch)",
-                     "Start SOF (any switching)",
-                     "Start non-SOF (any switching)"),
+    intervention = c("Always active (no switch)",
+                     "Always comparator (no switch)",
+                     "Start active (any switching)",
+                     "Start comparator (any switching)"),
     prop_natural = c(treat_no_switch, ctrl_no_switch,
                      treat_start, ctrl_start)
   )
@@ -116,7 +119,7 @@ summarize_support <- function(dat, scenario_label = "Default") {
   tibble::tibble(
     scenario      = scenario_label,
     n             = nrow(dat),
-    switch_rate   = mean(dat$switch),
+    switch_rate   = mean(dat[[if ("switched" %in% names(dat)) "switched" else "switch"]]),
     ps_near_0     = ps_diag$diagnostics$near_0,
     ps_near_1     = ps_diag$diagnostics$near_1,
     ps_violation  = ps_diag$diagnostics$near_0_or_1,
@@ -145,10 +148,10 @@ plot_support_scenarios <- function(scenario_list) {
   }))
 
   ggplot(combined, aes(x = ps, fill = factor(treatment,
-                                              labels = c("Non-SOF", "SOF")))) +
+                                              labels = c("Comparator", "Active")))) +
     geom_histogram(alpha = 0.5, bins = 50, position = "identity") +
     facet_wrap(~ scenario, scales = "free_y", ncol = 1) +
-    labs(x = "Estimated P(SOF | Baseline)", y = "Count",
+    labs(x = "Estimated P(Active | Baseline)", y = "Count",
          fill = "Treatment",
          title = "Data Support Diagnostic: Propensity Score Overlap") +
     theme_minimal(base_size = 11) +

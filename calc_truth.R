@@ -1,70 +1,136 @@
+# calc_truth.R
+# Compute Monte Carlo ground truth for each estimand from the DGP.
+# Generates large counterfactual datasets under each policy to obtain
+# true 180-day risks, risk differences, and risk ratios.
 
-library(data.table)
 library(dplyr)
-library(tidyr)
-library(lmtp)
-library(SuperLearner)
-library(furrr)
 library(here)
-library(MatchIt)
-library(survival)
-library(broom)
 
-source("DGP.R")
+source(here("DGP.R"))
 
-set.seed(12345)
+# ── Truth: Treatment-Policy Estimand ─────────────────────────────────────────
+#' Compute true risks under the treatment-policy estimand.
+#' Under treatment-policy, switching occurs naturally but is not censored.
+#' We generate all-treated and all-control datasets with policy="treatment_policy",
+#' no dependent censoring, and compute 180-day cumulative incidence.
+#'
+#' @param N integer; Monte Carlo sample size (large for precision).
+#' @param tau integer; risk window in days.
+#' @param seed integer; random seed.
+#' @param ... additional DGP arguments (np_hazard, complexity, etc.).
+#' @return list with true_risk_1, true_risk_0, true_rd, true_rr.
+truth_treatment_policy <- function(N = 500000, tau = 180, seed = 9999, ...) {
+  dots <- list(...)
 
-# With switch_on=FALSE and dep_censor=FALSE, there is no switching and no
-# random censoring (only admin max_follow), so potential outcomes are clean.
-df_complex_A1 <- generate_hcv_data(        N               = 1000000,
-                                           np_hazard     = TRUE,
-                                    dep_censor    = FALSE,
-                                    complexity    = TRUE,
-                                    switch_on = FALSE,
-                                    treat_override  = "all_treated",
-                                    seed=1234)
+  common <- list(
+    N          = N,
+    dep_censor = FALSE,
+    policy     = "treatment_policy",
+    seed       = seed
+  )
+  common <- modifyList(common, dots)
 
-df_complex_A0 <- generate_hcv_data(     N               = 1000000,
-                                        np_hazard     = TRUE,
-                                       dep_censor    = FALSE,
-                                       complexity    = TRUE,
-                                       switch_on = FALSE,
-                                       treat_override  = "all_control",
-                                       seed=1234)
+  df_a1 <- do.call(generate_hep_data,
+                    modifyList(common, list(treat_override = "all_treated")))
+  df_a0 <- do.call(generate_hep_data,
+                    modifyList(common, list(treat_override = "all_control")))
 
-mean(df_complex_A1$event) *100
+  risk_1 <- mean(df_a1$event == 1 & df_a1$follow_time <= tau)
+  risk_0 <- mean(df_a0$event == 1 & df_a0$follow_time <= tau)
 
-#CI at 180 days:
-df_complex_A1$Y180 <- df_complex_A1$event
-df_complex_A0$Y180 <- df_complex_A0$event
-df_complex_A1$Y180[df_complex_A1$follow_time>180] <- 0
-df_complex_A0$Y180[df_complex_A0$follow_time>180] <- 0
-
-mean(df_complex_A1$event)
-(mean(df_complex_A1$Y180) - mean(df_complex_A0$Y180))*100
-(mean(df_complex_A1$Y180) / mean(df_complex_A0$Y180))
-
-#true CID: 0.0002619194
-#true CIR: 1.011929
-
-
-saveRDS(all_contrasts, file = here("results","sim_results", "lmtp_sim_all.rds"))
-
-lmtp_res= readRDS(here("results","sim_results", "lmtp_sim_all.rds"))
-ps_res = read.csv(here("results","summary_ps.csv"))
-mean(ps_res$cox_hr)
-
-
-temp=lmtp_res[[1]]
-class(temp)
-temp$estimates
-
-for(i in 1:length(lmtp_res)){
-  if (i==1){
-    all_contrasts <- lmtp_res[[i]]$estimates
-  } else {
-    all_contrasts <- rbind(all_contrasts, lmtp_res[[i]]$estimates)
-  }
+  list(
+    estimand    = "treatment_policy",
+    true_risk_1 = risk_1,
+    true_risk_0 = risk_0,
+    true_rd     = risk_1 - risk_0,
+    true_rr     = risk_1 / risk_0,
+    N           = N,
+    tau         = tau
+  )
 }
 
-mean(all_contrasts$estimate)
+
+# ── Truth: Hypothetical No-Switch Estimand ───────────────────────────────────
+#' Compute true risks under the hypothetical no-switch estimand.
+#' Under no-switch, no switching occurs at all. This gives the counterfactual
+#' outcome distribution in a world where nobody switches treatment.
+#'
+#' @param N integer; Monte Carlo sample size.
+#' @param tau integer; risk window in days.
+#' @param seed integer; random seed.
+#' @param ... additional DGP arguments.
+#' @return list with true_risk_1, true_risk_0, true_rd, true_rr.
+truth_no_switch <- function(N = 500000, tau = 180, seed = 9999, ...) {
+  dots <- list(...)
+
+  common <- list(
+    N          = N,
+    dep_censor = FALSE,
+    policy     = "no_switch",
+    seed       = seed
+  )
+  common <- modifyList(common, dots)
+
+  df_a1 <- do.call(generate_hep_data,
+                    modifyList(common, list(treat_override = "all_treated")))
+  df_a0 <- do.call(generate_hep_data,
+                    modifyList(common, list(treat_override = "all_control")))
+
+  risk_1 <- mean(df_a1$event == 1 & df_a1$follow_time <= tau)
+  risk_0 <- mean(df_a0$event == 1 & df_a0$follow_time <= tau)
+
+  list(
+    estimand    = "no_switch",
+    true_risk_1 = risk_1,
+    true_risk_0 = risk_0,
+    true_rd     = risk_1 - risk_0,
+    true_rr     = risk_1 / risk_0,
+    N           = N,
+    tau         = tau
+  )
+}
+
+
+# ── Compute and save ─────────────────────────────────────────────────────────
+
+if (sys.nframe() == 0) {
+  # Only run when sourced as a script, not when sourced by other files
+  set.seed(12345)
+
+  message("Computing treatment-policy truth (N = 500,000)...")
+  truth_tp <- truth_treatment_policy(
+    N = 500000, tau = 180, seed = 9999,
+    np_hazard = TRUE, complexity = TRUE,
+    switch_on = TRUE  # switching happens but does not censor
+  )
+
+  message("Computing no-switch truth (N = 500,000)...")
+  truth_ns <- truth_no_switch(
+    N = 500000, tau = 180, seed = 9999,
+    np_hazard = TRUE, complexity = TRUE
+  )
+
+  truth_all <- list(
+    treatment_policy = truth_tp,
+    no_switch        = truth_ns
+  )
+
+  # TODO(Joy): verify that these parameters match the hepatitis B
+  #   renal failure incidence rates from the literature.
+
+  message("\n=== Treatment-Policy Truth ===")
+  message("  Risk (treated):  ", round(truth_tp$true_risk_1, 6))
+  message("  Risk (control):  ", round(truth_tp$true_risk_0, 6))
+  message("  Risk difference: ", round(truth_tp$true_rd, 6))
+  message("  Risk ratio:      ", round(truth_tp$true_rr, 4))
+
+  message("\n=== No-Switch Truth ===")
+  message("  Risk (treated):  ", round(truth_ns$true_risk_1, 6))
+  message("  Risk (control):  ", round(truth_ns$true_risk_0, 6))
+  message("  Risk difference: ", round(truth_ns$true_rd, 6))
+  message("  Risk ratio:      ", round(truth_ns$true_rr, 4))
+
+  dir.create(here("results", "sim_results"), recursive = TRUE, showWarnings = FALSE)
+  saveRDS(truth_all, file = here("results", "sim_results", "ground_truth.rds"))
+  message("\nSaved to results/sim_results/ground_truth.rds")
+}
