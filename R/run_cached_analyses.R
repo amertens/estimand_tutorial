@@ -112,10 +112,11 @@ if (!file.exists(support_cache)) {
   scenarios <- list(dat_good, dat_strained, dat_poor)
   scenario_names <- c("Good support", "Strained support", "Poor support")
 
+  pb <- txtProgressBar(min = 0, max = length(scenarios), style = 3)
   support_results <- lapply(seq_along(scenarios), function(i) {
     d <- scenarios[[i]]
     nm <- scenario_names[i]
-    message("  Scenario: ", nm)
+    message("\n  Scenario: ", nm)
 
     cox_n <- tryCatch(
       fit_cox_naive(d, tau = tau),
@@ -131,6 +132,7 @@ if (!file.exists(support_cache)) {
       res$contrast_rd$estimates$estimate
     }, error = function(e) NA_real_)
 
+    setTxtProgressBar(pb, i)
     tibble::tibble(
       Scenario        = nm,
       `Cox naive HR`  = as.numeric(cox_n$hr),
@@ -138,6 +140,7 @@ if (!file.exists(support_cache)) {
       `LMTP RD`       = as.numeric(lmtp_rd)
     )
   }) %>% bind_rows()
+  close(pb)
 
   saveRDS(support_results, support_cache)
   message("Saved support results to ", support_cache)

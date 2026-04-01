@@ -144,13 +144,16 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
     return(readRDS(cache_file))
   }
 
-  message("Running ", n_iter, " iterations x ", length(estimands), " estimands...")
+  total_iters <- n_iter * length(estimands)
+  message("Running ", n_iter, " iterations x ", length(estimands), " estimands (",
+          total_iters, " total)...")
   all_res <- NULL
+  counter <- 0
 
   for (est in estimands) {
     message("  Estimand: ", est)
+    pb <- txtProgressBar(min = 0, max = n_iter, style = 3)
     for (i in seq_len(n_iter)) {
-      if (i %% 25 == 0) message("    iteration ", i, " / ", n_iter)
       iter_res <- run_one_iter(
         i, estimand = est, sample_size = sample_size,
         tau = tau, bin_width = bin_width,
@@ -158,7 +161,9 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
         dgp_args = dgp_args
       )
       all_res <- bind_rows(all_res, iter_res)
+      setTxtProgressBar(pb, i)
     }
+    close(pb)
   }
 
   if (!is.null(cache_file)) {
