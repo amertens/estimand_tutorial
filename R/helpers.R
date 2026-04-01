@@ -249,14 +249,22 @@ intervention_no_switch <- function(data, trt) {
 # ── LMTP data preparation ───────────────────────────────────────────────────
 #' Prepare wide-format data for lmtp_sdr().
 #' @param dat data.frame from generate_hep_data().
-#' @param tau integer; follow-up horizon.
+#' @param tau integer; follow-up horizon in days.
+#' @param bin_width integer; number of days per time bin. Default 1 (daily).
+#'   Use 7 for weekly bins (~26 columns instead of 180) for faster LMTP.
+#'   Coarser bins trade temporal resolution for speed.
 #' @param baseline character vector of baseline covariate names.
-#' @return list with wide data.frame, Y_cols, C_cols, baseline.
-prepare_lmtp_data <- function(dat, tau = 180,
+#' @return list with wide data.frame, Y_cols, C_cols, baseline, n_bins.
+prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,
                               baseline = c("age", "sex_male", "ckd",
                                            "diabetes", "hypertension",
                                            "heart_failure")) {
   baseline <- intersect(baseline, names(dat))
+
+  # Define time bins: each bin covers bin_width days
+  bin_edges <- seq(0, tau, by = bin_width)
+  if (tail(bin_edges, 1) < tau) bin_edges <- c(bin_edges, tau)
+  n_bins <- length(bin_edges) - 1
 
   dat <- dat %>%
     mutate(
@@ -266,19 +274,27 @@ prepare_lmtp_data <- function(dat, tau = 180,
       time_to_cens = if_else(cens_event == 1, follow_time, as.numeric(tau))
     )
 
-  # Build wide Y and C vectors
-  make_Y <- function(t_aki, e) as.integer(seq_len(tau) >= t_aki & e == 1)
+  # Build wide Y and C vectors at binned resolution
+  make_Y <- function(t_aki, e) {
+    as.integer(bin_edges[-1] >= t_aki & e == 1)
+  }
   make_C <- function(t_c, e) {
-    v <- rep(1L, tau)
-    if (e == 1 && t_c < tau) v[seq(t_c + 1L, tau)] <- 0L
+    v <- rep(1L, n_bins)
+    if (e == 1 && t_c < tau) {
+      # Find the first bin where censoring occurs
+      cens_bin <- which(bin_edges[-1] > t_c)[1]
+      if (!is.na(cens_bin) && cens_bin <= n_bins) {
+        v[seq(cens_bin, n_bins)] <- 0L
+      }
+    }
     v
   }
 
   Y_mat <- t(mapply(make_Y, dat$time_to_aki, dat$aki_event))
   C_mat <- t(mapply(make_C, dat$time_to_cens, dat$cens_event))
 
-  Y_cols <- paste0("Y", seq_len(tau))
-  C_cols <- paste0("C", seq_len(tau))
+  Y_cols <- paste0("Y", seq_len(n_bins))
+  C_cols <- paste0("C", seq_len(n_bins))
   colnames(Y_mat) <- Y_cols
   colnames(C_mat) <- C_cols
 
@@ -292,7 +308,7 @@ prepare_lmtp_data <- function(dat, tau = 180,
   wide <- lmtp::event_locf(as.data.frame(wide), outcomes = Y_cols)
 
   list(data = as.data.frame(wide), Y_cols = Y_cols, C_cols = C_cols,
-       baseline = baseline)
+       baseline = baseline, n_bins = n_bins, bin_width = bin_width)
 }
 
 

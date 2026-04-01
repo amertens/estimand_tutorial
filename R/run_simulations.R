@@ -32,6 +32,7 @@ source(here("R", "helpers.R"))
 #' @return data.frame with one row per method.
 run_one_iter <- function(i, estimand = "treatment_policy",
                          sample_size = 1000, tau = 180,
+                         bin_width = 7,
                          run_lmtp = TRUE, run_cox_td = FALSE,
                          dgp_args = list()) {
   set.seed(1000 + i)
@@ -97,7 +98,7 @@ run_one_iter <- function(i, estimand = "treatment_policy",
   if (run_lmtp) {
     results[["lmtp"]] <- tryCatch({
       requireNamespace("lmtp", quietly = TRUE)
-      prep <- prepare_lmtp_data(dat, tau = tau)
+      prep <- prepare_lmtp_data(dat, tau = tau, bin_width = bin_width)
       res  <- run_lmtp_analysis(prep, folds = 2, learners = c("SL.glm"))
       rd_est <- res$contrast_rd$vals$theta
       rd_se  <- res$contrast_rd$vals$std.error
@@ -133,7 +134,7 @@ run_one_iter <- function(i, estimand = "treatment_policy",
 #' @param cache_file character or NULL; path to cache results.
 #' @return data.frame of aggregated results.
 run_simulation_study <- function(n_iter = 200, sample_size = 1000,
-                                 tau = 180,
+                                 tau = 180, bin_width = 7,
                                  estimands = c("treatment_policy", "no_switch"),
                                  run_lmtp = TRUE, run_cox_td = FALSE,
                                  dgp_args = list(),
@@ -152,7 +153,8 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
       if (i %% 25 == 0) message("    iteration ", i, " / ", n_iter)
       iter_res <- run_one_iter(
         i, estimand = est, sample_size = sample_size,
-        tau = tau, run_lmtp = run_lmtp, run_cox_td = run_cox_td,
+        tau = tau, bin_width = bin_width,
+        run_lmtp = run_lmtp, run_cox_td = run_cox_td,
         dgp_args = dgp_args
       )
       all_res <- bind_rows(all_res, iter_res)

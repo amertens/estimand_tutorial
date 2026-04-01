@@ -5,6 +5,10 @@
 #
 # Usage: Rscript R/run_cached_analyses.R
 # Or source from RStudio: source("R/run_cached_analyses.R")
+#
+# Speed settings: bin_width=7 uses weekly time bins (~26 columns instead
+# of 180) for LMTP, cutting runtime ~7x. Increase to bin_width=1 for
+# daily resolution in production.
 
 library(here)
 library(dplyr)
@@ -19,8 +23,12 @@ dir.create(here("results"), showWarnings = FALSE, recursive = TRUE)
 dir.create(here("results", "sim_results"), showWarnings = FALSE, recursive = TRUE)
 
 tau <- 180
+# Weekly bins: ~26 time points instead of 180. Major speedup for LMTP.
+# Set to 1 for daily resolution in production analyses.
+BIN_WIDTH <- 7
 
 # ── 1. Ground truth (two estimands) ─────────────────────────────────────────
+# This is fast (~1 min) -- pure DGP simulation, no LMTP.
 source(here("calc_truth.R"))
 
 truth_cache <- here("results", "sim_results", "ground_truth.rds")
@@ -46,24 +54,26 @@ if (!file.exists(truth_cache)) {
 message("  TP RD = ", round(truth_all$treatment_policy$true_rd, 6))
 message("  NS RD = ", round(truth_all$no_switch$true_rd, 6))
 
-# ── 2. Main LMTP analysis (single dataset, N=5000) ──────────────────────────
+# ── 2. Main LMTP analysis (single dataset) ──────────────────────────────────
+# N=2000 with weekly bins: ~2-5 min
 lmtp_cache <- here("results", "lmtp_main.rds")
 if (!file.exists(lmtp_cache)) {
-  message("\n=== Running main LMTP analysis (N=5000) ===")
+  message("\n=== Running main LMTP analysis (N=2000, bin_width=", BIN_WIDTH, ") ===")
   requireNamespace("lmtp", quietly = TRUE)
   requireNamespace("SuperLearner", quietly = TRUE)
 
   set.seed(2026)
   dat <- generate_hep_data(
-    N = 5000, np_hazard = TRUE, dep_censor = TRUE,
+    N = 2000, np_hazard = TRUE, dep_censor = TRUE,
     complexity = TRUE, policy = "treatment_policy", seed = 2026
   )
 
   lmtp_prep <- prepare_lmtp_data(
-    dat, tau = tau,
+    dat, tau = tau, bin_width = BIN_WIDTH,
     baseline = c("age", "sex_male", "ckd", "diabetes",
                  "hypertension", "heart_failure")
   )
+  message("  LMTP columns: ", lmtp_prep$n_bins, " time bins")
 
   lmtp_res <- run_lmtp_analysis(lmtp_prep, folds = 2,
                                 learners = c("SL.glm"))
@@ -74,6 +84,7 @@ if (!file.exists(lmtp_cache)) {
 }
 
 # ── 3. Support estimation across scenarios ───────────────────────────────────
+# 3 scenarios x LMTP at N=1000 with weekly bins: ~5-10 min total
 support_cache <- here("results", "support_estimation.rds")
 if (!file.exists(support_cache)) {
   message("\n=== Running support scenario estimation ===")
@@ -82,18 +93,18 @@ if (!file.exists(support_cache)) {
 
   set.seed(101)
   dat_good <- generate_hep_data(
-    N = 2000, np_hazard = TRUE, dep_censor = TRUE,
+    N = 1000, np_hazard = TRUE, dep_censor = TRUE,
     complexity = TRUE, policy = "treatment_policy", seed = 101
   )
   set.seed(102)
   dat_strained <- generate_hep_data(
-    N = 2000, np_hazard = TRUE, dep_censor = TRUE,
+    N = 1000, np_hazard = TRUE, dep_censor = TRUE,
     complexity = TRUE, policy = "treatment_policy",
     gamma_A = 1.5, gamma_ckd = 1.2, lambda_sw0 = 5e-5, seed = 102
   )
   set.seed(103)
   dat_poor <- generate_hep_data(
-    N = 2000, np_hazard = TRUE, dep_censor = TRUE,
+    N = 1000, np_hazard = TRUE, dep_censor = TRUE,
     complexity = TRUE, policy = "treatment_policy",
     gamma_A = 2.5, gamma_ckd = 2.0, lambda_sw0 = 1e-4, seed = 103
   )
@@ -115,7 +126,7 @@ if (!file.exists(support_cache)) {
       error = function(e) list(hr = NA, ci_low = NA, ci_high = NA)
     )
     lmtp_rd <- tryCatch({
-      prep <- prepare_lmtp_data(d, tau = tau)
+      prep <- prepare_lmtp_data(d, tau = tau, bin_width = BIN_WIDTH)
       res <- run_lmtp_analysis(prep, folds = 2)
       res$contrast_rd$estimates$estimate
     }, error = function(e) NA_real_)
@@ -135,13 +146,14 @@ if (!file.exists(support_cache)) {
 }
 
 # ── 4. Repeated simulation study ─────────────────────────────────────────────
+# 10 iters x 2 estimands x N=500 with weekly bins: ~10-20 min
 sim_cache <- here("results", "sim_study_main.rds")
 if (!file.exists(sim_cache)) {
-  message("\n=== Running simulation study (10 iters x 2 estimands, N=1000) ===")
-  message("    (Set n_iter higher for production; 10 is for fast iteration)")
+  message("\n=== Running simulation study (10 iters x 2 estimands, N=500) ===")
+  message("    (Increase n_iter and sample_size for production)")
   sim_results <- run_simulation_study(
     n_iter      = 10,
-    sample_size = 1000,
+    sample_size = 500,
     tau         = tau,
     estimands   = c("treatment_policy", "no_switch"),
     run_lmtp    = TRUE,
