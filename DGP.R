@@ -195,37 +195,40 @@ generate_hep_data <- function(
 #   to match realistic renal-failure incidence in tenofovir vs entecavir.
 
 # ── Generate and cache example datasets ──────────────────────────────────────
+# Only run when this script is executed directly, not when sourced by other files.
 
-set.seed(1234)
-df <- generate_hep_data(
-  h0         = 3e-4,
-  np_hazard  = FALSE,
-  dep_censor = FALSE,
-  complexity = FALSE,
-  policy     = "treatment_policy",
-  seed       = 1234
-)
+if (sys.nframe() == 0) {
+  set.seed(1234)
+  df <- generate_hep_data(
+    h0         = 3e-4,
+    np_hazard  = FALSE,
+    dep_censor = FALSE,
+    complexity = FALSE,
+    policy     = "treatment_policy",
+    seed       = 1234
+  )
 
-# Check realistic values
-c(mean(df$follow_time),
-  mean(df$event) * 100,
-  mean(df$switched) * 100,
-  mean(df$event) / mean(df$follow_time <= 85) * 100)
+  # Check realistic values
+  c(mean(df$follow_time),
+    mean(df$event) * 100,
+    mean(df$switched) * 100,
+    mean(df$event) / mean(df$follow_time <= 85) * 100)
 
-write.csv(df, here::here("data/sim_hep_renal.csv"), row.names = FALSE)
+  write.csv(df, here::here("data/sim_hep_renal.csv"), row.names = FALSE)
 
 
-df_complex <- generate_hep_data(
-  np_hazard  = TRUE,
-  dep_censor = TRUE,
-  complexity = TRUE,
-  policy     = "treatment_policy",
-  seed       = 1234
-)
+  df_complex <- generate_hep_data(
+    np_hazard  = TRUE,
+    dep_censor = TRUE,
+    complexity = TRUE,
+    policy     = "treatment_policy",
+    seed       = 1234
+  )
 
-c(mean(df_complex$follow_time),
-  mean(df_complex$event) * 100,
-  mean(df_complex$switched) * 100,
-  mean(df_complex$event) / mean(df_complex$follow_time <= 85) * 100)
+  c(mean(df_complex$follow_time),
+    mean(df_complex$event) * 100,
+    mean(df_complex$switched) * 100,
+    mean(df_complex$event) / mean(df_complex$follow_time <= 85) * 100)
 
-write.csv(df_complex, here::here("data/sim_hep_renal_complex.csv"), row.names = FALSE)
+  write.csv(df_complex, here::here("data/sim_hep_renal_complex.csv"), row.names = FALSE)
+}
