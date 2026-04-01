@@ -23,13 +23,30 @@ compute_ps_diagnostics <- function(dat,
   ps_mod <- glm(fml, data = dat, family = binomial)
   dat$ps <- predict(ps_mod, type = "response")
 
+  # Data-adaptive positivity bound (Gruber et al. 2022):
+  # lower = 5 / (sqrt(n) * log(n)), upper = 1 - lower
+  n <- nrow(dat)
+  adaptive_bound <- 5 / (sqrt(n) * log(n))
+  adaptive_lower <- adaptive_bound
+  adaptive_upper <- 1 - adaptive_bound
+
   diag <- list(
     ps_summary    = summary(dat$ps),
+    # Fixed thresholds (conventional)
     near_0        = mean(dat$ps < 0.05),
     near_1        = mean(dat$ps > 0.95),
     near_0_or_1   = mean(dat$ps < 0.05 | dat$ps > 0.95),
     ess_treated   = sum(dat$treatment == 1 & dat$ps > 0.05 & dat$ps < 0.95),
-    ess_control   = sum(dat$treatment == 0 & dat$ps > 0.05 & dat$ps < 0.95)
+    ess_control   = sum(dat$treatment == 0 & dat$ps > 0.05 & dat$ps < 0.95),
+    # Data-adaptive thresholds (Gruber et al. 2022)
+    adaptive_lower = adaptive_lower,
+    adaptive_upper = adaptive_upper,
+    near_0_adaptive = mean(dat$ps < adaptive_lower),
+    near_1_adaptive = mean(dat$ps > adaptive_upper),
+    ess_treated_adaptive = sum(dat$treatment == 1 &
+                                 dat$ps > adaptive_lower & dat$ps < adaptive_upper),
+    ess_control_adaptive = sum(dat$treatment == 0 &
+                                 dat$ps > adaptive_lower & dat$ps < adaptive_upper)
   )
 
   list(data = dat, diagnostics = diag)

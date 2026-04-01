@@ -24,6 +24,8 @@ The central problem this chapter addresses is not which estimand to choose. Rath
 
 This chapter focuses on two estimands---the **treatment-policy** estimand and the **hypothetical no-switch** estimand---and demonstrates how to align (or misalign) estimators with each. The goal is not to compare estimands against each other, but to ensure that the chosen estimator matches the causal question.
 
+This chapter follows the structure of the **causal roadmap** for generating high-quality real-world evidence (Dang et al. 2023; Petersen 2014). The roadmap proceeds through: (1) defining the causal question and estimand as a function of counterfactual outcomes---not as a regression coefficient; (2) specifying a causal model (DAG); (3) assessing identifiability under exchangeability, positivity, and consistency; (4) defining the statistical estimand; (5) choosing an estimator; and (6) conducting sensitivity analyses. This tutorial concentrates on steps 1, 3--5: defining estimands, diagnosing support, and aligning estimators. A key principle of the roadmap is that the estimand should be defined mathematically before any statistical method is chosen, and that the gap between the causal estimand and the statistical estimand should be made explicit.
+
 **Goals:**
 
 1. Define the treatment-policy and hypothetical no-switch estimands under the ICH E9(R1) framework
@@ -279,6 +281,11 @@ cat("KM risk diff (censor at switch):", round(km_cs$risk_diff, 5), "\n")
 
 These unadjusted Kaplan-Meier estimates serve only as descriptive benchmarks and do not target any specific estimand.
 
+::: {.callout-note}
+## Why hazard ratios are fundamentally problematic as causal estimands
+The problems with the Cox HR extend beyond non-collapsibility and non-proportional hazards. Even in a perfectly randomised trial, the population-level HR at time $t$ compares groups that are no longer balanced: if treatment is effective, high-risk individuals are depleted more rapidly from the control arm, so the treatment group eventually contains a larger fraction of high-risk subjects. This **built-in selection bias** means the observed HR is an attenuated version of the individual-level causal HR (Stensrud et al. 2019). Furthermore, the causal HR---conditioning on all individual-level risk factors---requires the untestable assumption that counterfactual survival times are independent conditional on covariates; without this, the HR has no causal interpretation as a hazard ratio even when the Cox model fits perfectly (Martinussen 2022). Under non-proportional hazards, the Cox HR additionally depends on the censoring distribution, making it trial-specific and difficult to compare across studies (Rufibach 2018). Survival-function contrasts such as risk differences, risk ratios, and restricted mean survival time (RMST) differences avoid these problems and provide causally interpretable, absolute effect measures.
+:::
+
 ## Aligned Estimation with LMTP
 
 The `lmtp` package implements longitudinal modified treatment policies via the sequentially doubly robust (SDR) estimator. Unlike Cox regression, `lmtp`:
@@ -356,6 +363,18 @@ cat("LMTP RR 95% CI:", round(rr$conf.low, 5), "-",
 The Cox HR and the LMTP risk difference are not comparable as competing answers to the same question. They target different parameters on different scales. The problem is that the Cox HR is often *presented* as if it answers the estimand question, when in fact it targets a different quantity. LMTP directly targets the marginal risk under the specified intervention, which is the parameter defined by the estimand.
 :::
 
+### Practical LMTP/TMLE Specification
+
+The analysis above uses `SL.glm` with 2-fold cross-validation for speed. For production analyses, the following guidance from the targeted learning literature (Gruber et al. 2022; Chen et al. 2023) should be followed:
+
+- **Cross-validation folds.** The number of folds $V$ should be calibrated to the effective sample size $n_{\text{eff}}$: $V \geq 20$ when $n_{\text{eff}} < 500$; $V \geq 10$ for $500 \leq n_{\text{eff}} < 5000$; $V \geq 5$ for $5000 \leq n_{\text{eff}} < 10000$; $V \geq 2$ for $n_{\text{eff}} \geq 10000$. For binary outcomes, $n_{\text{eff}} = \min(\sum D, 5 \sum DY, 5 \sum D(1-Y))$ where $D$ indicates non-missing outcome.
+- **Super Learner library.** Include at minimum a parametric model (GLM), a penalised regression (glmnet/Lasso), and one flexible learner (xgboost, BART, or GAM). A richer library reduces the risk of model misspecification.
+- **Double robustness.** The SDR estimator used by `lmtp` is consistent if *either* the outcome model *or* the treatment/censoring model is correctly specified---not both. This is the key advantage over G-computation, which requires correct outcome model specification.
+- **Plug-in property.** Unlike inverse probability weighting, TMLE/SDR is a substitution estimator that respects model bounds (e.g., survival probabilities remain in $[0, 1]$), avoiding the out-of-bounds estimates that can occur with IPTW in sparse data.
+
+<!-- TODO(Joy): benchmark runtime with a richer SL library (SL.glm, SL.glmnet, SL.xgboost)
+     and determine the recommended specification for the final tutorial. -->
+
 ## Known Truth from the DGP
 
 Since we control the data-generating process, we can compute the true marginal risks under each estimand by generating large counterfactual datasets.
@@ -404,6 +423,10 @@ cat("True RR:", round(truth_all$no_switch$true_rr, 4), "\n")
 ## Data Support Diagnostics {#sec-support}
 
 Identification of a causal estimand may be conceptually justified, but estimation can fail in practice if the data do not provide adequate empirical support for the target intervention. This section introduces diagnostics for assessing data support and demonstrates how estimation degrades as support weakens.
+
+**Positivity** requires that, within every stratum defined by measured confounders, there is a nonzero probability of receiving each treatment. In longitudinal settings (as with LMTP), sequential positivity requires that the cumulative product of conditional treatment and censoring probabilities remains bounded away from zero at every time point. When this product approaches zero in some strata, the corresponding inverse-probability weights become extreme and estimators become unstable.
+
+Rather than using fixed thresholds (e.g., flagging propensity scores below 0.05 or above 0.95), a data-adaptive approach sets the positivity bound as $5 / (\sqrt{n} \cdot \log n)$, where $n$ is the sample size (Gruber et al. 2022). For $n = 2000$, this gives bounds of approximately $(0.025, 0.975)$; for $n = 500$, approximately $(0.036, 0.964)$. The `compute_ps_diagnostics()` function in our support diagnostics reports both conventional and adaptive thresholds.
 
 ### Three Support Scenarios
 
@@ -659,6 +682,17 @@ The results demonstrate a consistent pattern:
 
 The central lesson is not that LMTP is generically superior to Cox regression. It is that **LMTP is better aligned with the estimand** when the estimand is defined as a marginal risk contrast under a longitudinal intervention, and when time-varying confounding affected by prior treatment is present.
 
+## Sensitivity to Unmeasured Confounding
+
+Even with a well-aligned estimator and adequate data support, the causal interpretation of any observational estimate rests on the assumption of no unmeasured confounding (exchangeability). The **causal gap** $\delta = \psi_{\text{stat}} - \psi_{\text{causal}}$ quantifies the difference between what the statistical estimand identifies and the true causal quantity. In a randomised trial, $\delta = 0$ by design; in an observational study, $\delta$ reflects residual confounding from unmeasured common causes of treatment and outcome.
+
+A useful diagnostic is the **G-value** (Gruber et al. 2024): the minimum causal gap needed to shift the confidence interval to include the null. If the G-value is large relative to the magnitude of the measured confounding adjustment (the difference between unadjusted and adjusted estimates), the finding is robust. If it is small, even modest unmeasured confounding could nullify the result. Sensitivity analyses should examine how the point estimate and confidence interval change across a range of hypothesised $\delta$ values, typically from 0 to 5 times the measured confounding adjustment (Dang et al. 2023).
+
+This tutorial does not implement a full sensitivity analysis, but the causal roadmap framework requires it as a distinct step (Step 6). In a complete analysis, a sensitivity plot showing shifted estimates and confidence bounds across a range of causal gap values should accompany every primary result.
+
+<!-- TODO(Joy): implement a nonparametric sensitivity analysis function and
+     add a worked example to the simulation study. -->
+
 ## Key Messages
 
 1. **The main problem is estimand-estimator misalignment.** Analysts often run regression procedures that do not target the stated estimand when intercurrent events are present.
@@ -679,3 +713,11 @@ The central lesson is not that LMTP is generically superior to Cox regression. I
 - Williams N, Diaz I (2023). lmtp: Non-parametric causal effects of feasible interventions based on modified treatment policies. R package.
 - van der Laan MJ, Rose S (2011). Targeted Learning: Causal Inference for Observational and Experimental Data.
 - Hernan MA, Robins JM (2020). Causal Inference: What If.
+- Dang LE, Tarp JM, Abrahamsen B, et al. (2023). A causal roadmap for generating high-quality real-world evidence. Journal of Clinical and Translational Science.
+- Gruber S, Lee H, Phillips R, Ho M, van der Laan MJ (2022). Developing a targeted learning-based statistical analysis plan. Statistics in Biopharmaceutical Research.
+- Gruber S, Phillips RV, Lee H, van der Laan MJ (2024). Targeted learning: toward a future informed by real-world evidence. Statistics in Biopharmaceutical Research.
+- Chen RC, Rosenblum M, van der Laan MJ, Gruber S (2023). Beyond the Cox hazard ratio: a targeted learning approach to survival analysis in a cardiovascular outcome trial application. Clinical Trials.
+- Martinussen T (2022). Causality and the Cox regression model. Annual Review of Statistics and Its Application.
+- Stensrud MJ, Aalen JM, Aalen OO, Valberg M (2019). Limitations of hazard ratios in clinical trials. European Heart Journal.
+- Rufibach K (2019). Treatment effect quantification for time-to-event endpoints: estimands, analysis strategies, and beyond. Pharmaceutical Statistics.
+- Petersen ML (2014). Applying a causal road map in settings with time-dependent confounding. Epidemiology.

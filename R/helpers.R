@@ -304,7 +304,10 @@ prepare_lmtp_data <- function(dat, tau = 180,
 #' @param shift_off function; intervention for "control" arm.
 #'   Defaults to lmtp::static_binary_off.
 #' @param folds integer; number of cross-validation folds.
+#'   For production: V >= 10 when n_eff < 5000 (Gruber et al. 2022).
 #' @param learners character vector of SuperLearner libraries.
+#'   For production: c("SL.glm", "SL.glmnet", "SL.xgboost") at minimum.
+#'   Tutorial default is SL.glm only for speed.
 #' @return list with res_on, res_off, risk_trt, risk_ctrl, contrast_rr, contrast_rd.
 run_lmtp_analysis <- function(lmtp_prep,
                               shift_on  = NULL,
