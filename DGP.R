@@ -17,9 +17,9 @@ generate_hep_data <- function(
     complexity      = TRUE,       # TRUE -> nonlinear PS & outcome models
     ## informative switching
     switch_on       = TRUE,       # TRUE -> informative switching; FALSE -> no switching at all
-    lambda_sw0      = 2.5e-5,     # baseline switch hazard
-    gamma_A         = 0.60,       # log-HR for treatment on switch
-    gamma_ckd       = 0.40,       # log-HR per CKD on switch
+    lambda_sw0      = 1.0e-3,     # baseline switch hazard (targets ~15-20% switching by 180d)
+    gamma_A         = 0.80,       # log-HR for treatment on switch
+    gamma_ckd       = 0.60,       # log-HR per CKD on switch
     ## estimand policy
     policy          = c("treatment_policy", "no_switch"),
     ## misc
@@ -99,37 +99,9 @@ generate_hep_data <- function(
   base_rate <- h0 * exp(lp_out)
 
   ##--------------------------------------------------------------------------
-  ## 5. Event times (renal failure) ------------------------------------------
-  if (!np_hazard) {
-    ## proportional hazards
-    rate <- base_rate * ifelse(cohort$treatment == 1, HR_early, 1)
-    cohort$event_time <- rexp(nrow(cohort), rate = rate)
-  } else {
-    ## non-PH: change-point in HR at tau days
-    rpexp_piece <- function(n, r1, r2, tau) {
-      u  <- runif(n); p1 <- 1 - exp(-r1 * tau); t <- numeric(n)
-      e  <- u <= p1
-      t[e]  <- -log(1 - u[e]) / r1[e]
-      t[!e] <- tau - log((1 - u[!e]) / (1 - p1[!e])) / r2[!e]
-      t
-    }
-    r1 <- base_rate * ifelse(cohort$treatment == 1, HR_early, 1)
-    r2 <- base_rate * ifelse(cohort$treatment == 1, HR_late,  1)
-    cohort$event_time <- rpexp_piece(nrow(cohort), r1, r2, tau)
-  }
-
-  ##--------------------------------------------------------------------------
-  ## 6. Administrative censoring ---------------------------------------------
-  if (!dep_censor) {
-    censor_admin <- rep(max_follow, nrow(cohort))
-  } else {
-    c_rate <- censor_base * exp(0.04 * lp_out + 0.03 * cohort$treatment)
-    censor_admin <- rexp(nrow(cohort), rate = c_rate)
-  }
-  cohort$censor_admin <- pmin(censor_admin, max_follow)
-
-  ##--------------------------------------------------------------------------
-  ## 7. Treatment switching --------------------------------------------------
+  ## 5. Treatment switching --------------------------------------------------
+  # Generate switch times BEFORE event times so that switching can modify
+  # the post-switch hazard (step 6).
   # switch_on = FALSE -> no switching at all
   # switch_on = TRUE  -> informative switching modeled with its own hazard
   if (!switch_on) {
@@ -139,12 +111,99 @@ generate_hep_data <- function(
     lambda_sw <- lambda_sw0 *
       exp(gamma_A * cohort$treatment + gamma_ckd * cohort$ckd)
     Sw_lat <- rexp(nrow(cohort), rate = lambda_sw)
-
     cohort$switch_time <- Sw_lat
-    # A subject "switched" if their latent switch time falls before the
-    # administrative censoring and before the event.
-    cohort$switched <- as.integer(Sw_lat < cohort$censor_admin)
+    cohort$switched    <- 0L  # will be refined after event times
   }
+
+  ##--------------------------------------------------------------------------
+  ## 6. Event times (renal failure) ------------------------------------------
+  # When switch_on = TRUE and policy = "treatment_policy", a patient who
+  # switches at time S has:
+  #   - hazard based on ORIGINAL treatment for t in [0, S)
+  #   - hazard based on OPPOSITE treatment for t >= S
+  # This means the treatment-policy and no-switch truths will differ.
+  #
+  # Implementation: generate event time in two pieces.
+  #   Piece 1: [0, switch_time) under original treatment hazard
+  #   Piece 2: [switch_time, Inf) under switched treatment hazard
+  # If no event in piece 1, the residual survival is memoryless (exponential)
+  # so we draw a new residual time under the post-switch rate.
+
+  if (!np_hazard) {
+    ## ── Proportional hazards ──
+    rate_orig <- base_rate * ifelse(cohort$treatment == 1, HR_early, 1)
+    rate_switch <- base_rate * ifelse(cohort$treatment == 1, 1, HR_early)
+
+    # Draw event time under original treatment
+    event_time_orig <- rexp(nrow(cohort), rate = rate_orig)
+
+    if (switch_on) {
+      # For patients who switch before their original event time,
+      # redraw the residual event time under the post-switch hazard.
+      did_switch_before_event <- cohort$switch_time < event_time_orig
+      residual <- rexp(nrow(cohort), rate = rate_switch)
+      event_time_new <- ifelse(
+        did_switch_before_event,
+        cohort$switch_time + residual,
+        event_time_orig
+      )
+      cohort$event_time <- event_time_new
+    } else {
+      cohort$event_time <- event_time_orig
+    }
+
+  } else {
+    ## ── Non-PH: change-point in HR at tau days ──
+    rpexp_piece <- function(n, r1, r2, tau) {
+      u  <- runif(n); p1 <- 1 - exp(-r1 * tau); t <- numeric(n)
+      e  <- u <= p1
+      t[e]  <- -log(1 - u[e]) / r1[e]
+      t[!e] <- tau - log((1 - u[!e]) / (1 - p1[!e])) / r2[!e]
+      t
+    }
+
+    # Rates under original treatment
+    r1_orig <- base_rate * ifelse(cohort$treatment == 1, HR_early, 1)
+    r2_orig <- base_rate * ifelse(cohort$treatment == 1, HR_late,  1)
+    event_time_orig <- rpexp_piece(nrow(cohort), r1_orig, r2_orig, tau)
+
+    if (switch_on) {
+      # Rates under switched treatment (opposite arm)
+      r1_switch <- base_rate * ifelse(cohort$treatment == 1, 1, HR_early)
+      r2_switch <- base_rate * ifelse(cohort$treatment == 1, 1, HR_late)
+
+      did_switch_before_event <- cohort$switch_time < event_time_orig
+
+      # For switchers: draw residual time under post-switch rate.
+      # Use the rate appropriate for the calendar time after switch.
+      # Simplification: use the late-period rate if switch_time > tau,
+      # early-period rate otherwise, then add a piecewise residual.
+      # For tractability, we use a constant-rate residual at the
+      # time-appropriate post-switch rate.
+      sw_t <- cohort$switch_time
+      post_switch_rate <- ifelse(sw_t <= tau, r1_switch, r2_switch)
+      residual <- rexp(nrow(cohort), rate = post_switch_rate)
+
+      event_time_new <- ifelse(
+        did_switch_before_event,
+        sw_t + residual,
+        event_time_orig
+      )
+      cohort$event_time <- event_time_new
+    } else {
+      cohort$event_time <- event_time_orig
+    }
+  }
+
+  ##--------------------------------------------------------------------------
+  ## 7. Administrative censoring ---------------------------------------------
+  if (!dep_censor) {
+    censor_admin <- rep(max_follow, nrow(cohort))
+  } else {
+    c_rate <- censor_base * exp(0.04 * lp_out + 0.03 * cohort$treatment)
+    censor_admin <- rexp(nrow(cohort), rate = c_rate)
+  }
+  cohort$censor_admin <- pmin(censor_admin, max_follow)
 
   ##--------------------------------------------------------------------------
   ## 8. Observed follow-up & event indicator ---------------------------------
@@ -159,7 +218,7 @@ generate_hep_data <- function(
 
   # Refine switched indicator: only count switching before follow-up end
   cohort$switched <- as.integer(
-    cohort$switch_time < cohort$follow_time & cohort$switched == 1L
+    cohort$switch_time < cohort$follow_time
   )
 
   ##--------------------------------------------------------------------------

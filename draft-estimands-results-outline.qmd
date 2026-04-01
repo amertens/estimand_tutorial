@@ -130,7 +130,7 @@ The DGP accepts a `policy` argument:
 #| cache: true
 set.seed(2026)
 dat <- generate_hep_data(
-  N           = 5000,
+  N           = 10000,
   np_hazard   = TRUE,
   dep_censor  = TRUE,
   complexity  = TRUE,
@@ -426,23 +426,23 @@ We create three versions of the DGP by modifying parameters that control switchi
 
 set.seed(101)
 dat_good <- generate_hep_data(
-  N = 2000, np_hazard = TRUE, dep_censor = TRUE,
+  N = 5000, np_hazard = TRUE, dep_censor = TRUE,
   complexity = TRUE, policy = "treatment_policy", seed = 101
 )
 
 set.seed(102)
 dat_strained <- generate_hep_data(
-  N = 2000, np_hazard = TRUE, dep_censor = TRUE,
+  N = 5000, np_hazard = TRUE, dep_censor = TRUE,
   complexity = TRUE, policy = "treatment_policy",
-  gamma_A = 1.5, gamma_ckd = 1.2, lambda_sw0 = 5e-5,
+  gamma_A = 1.5, gamma_ckd = 1.2, lambda_sw0 = 5e-3,
   seed = 102
 )
 
 set.seed(103)
 dat_poor <- generate_hep_data(
-  N = 2000, np_hazard = TRUE, dep_censor = TRUE,
+  N = 5000, np_hazard = TRUE, dep_censor = TRUE,
   complexity = TRUE, policy = "treatment_policy",
-  gamma_A = 2.5, gamma_ckd = 2.0, lambda_sw0 = 1e-4,
+  gamma_A = 2.5, gamma_ckd = 2.0, lambda_sw0 = 1e-2,
   seed = 103
 )
 ```
@@ -529,7 +529,7 @@ sim_results <- readRDS(sim_cache)
 
 ```{r}
 #| label: tbl-sim-tp
-#| tbl-cap: "Simulation results: Treatment-policy estimand (50 iterations, N = 1000)"
+#| tbl-cap: "Simulation results: Treatment-policy estimand (10 iterations, N = 10,000)"
 
 sim_tp <- sim_results %>% filter(estimand == "treatment_policy")
 sim_summary_tp <- summarize_simulation(
@@ -542,7 +542,7 @@ kable(sim_summary_tp %>% select(-estimand), digits = 4, format = "pipe")
 
 ```{r}
 #| label: tbl-sim-ns
-#| tbl-cap: "Simulation results: Hypothetical no-switch estimand (50 iterations, N = 1000)"
+#| tbl-cap: "Simulation results: Hypothetical no-switch estimand (10 iterations, N = 10,000)"
 
 sim_ns <- sim_results %>% filter(estimand == "no_switch")
 sim_summary_ns <- summarize_simulation(
