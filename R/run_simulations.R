@@ -15,10 +15,14 @@ suppressPackageStartupMessages({
   library(survival)
   library(broom)
   library(here)
+  library(parallel)
 })
 
 source(here("DGP.R"))
 source(here("R", "helpers.R"))
+
+# Number of parallel workers (set to number of cores)
+N_CORES <- 8L
 
 # ── Single iteration for one estimand ────────────────────────────────────────
 #' Run one iteration of the simulation study for a specific estimand.
@@ -148,6 +152,7 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
                                  lmtp_learners = c("SL.mean", "SL.bayesglm"),
                                  estimands = c("treatment_policy", "no_switch"),
                                  run_lmtp = TRUE, run_cox_td = FALSE,
+                                 n_cores = N_CORES,
                                  dgp_args = list(),
                                  cache_file = NULL) {
   if (!is.null(cache_file) && file.exists(cache_file)) {
@@ -157,25 +162,70 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
 
   total_iters <- n_iter * length(estimands)
   message("Running ", n_iter, " iterations x ", length(estimands), " estimands (",
-          total_iters, " total)...")
+          total_iters, " total) on ", n_cores, " cores...")
+
   all_res <- NULL
-  counter <- 0
 
   for (est in estimands) {
     message("  Estimand: ", est)
-    pb <- txtProgressBar(min = 0, max = n_iter, style = 3)
-    for (i in seq_len(n_iter)) {
-      iter_res <- run_one_iter(
-        i, estimand = est, sample_size = sample_size,
-        tau = tau, bin_width = bin_width,
-        lmtp_learners = lmtp_learners,
-        run_lmtp = run_lmtp, run_cox_td = run_cox_td,
-        dgp_args = dgp_args
-      )
-      all_res <- bind_rows(all_res, iter_res)
-      setTxtProgressBar(pb, i)
+
+    if (n_cores > 1) {
+      # ── Parallel execution via PSOCK cluster (Windows-compatible) ──
+      cl <- makeCluster(n_cores)
+      on.exit(stopCluster(cl), add = TRUE)
+
+      # Export required functions and packages to workers
+      clusterEvalQ(cl, {
+        suppressPackageStartupMessages({
+          library(dplyr)
+          library(survival)
+          library(here)
+        })
+        source(here("DGP.R"))
+        source(here("R", "helpers.R"))
+      })
+
+      # Export the iteration function and parameters
+      clusterExport(cl, c("run_one_iter", "fit_cox_naive",
+                          "fit_cox_censor_switch", "fit_cox_td",
+                          "prepare_lmtp_data", "run_lmtp_analysis",
+                          "km_risk_at", "generate_hep_data"),
+                    envir = environment())
+
+      iter_results <- parLapply(cl, seq_len(n_iter), function(i) {
+        run_one_iter(
+          i, estimand = est, sample_size = sample_size,
+          tau = tau, bin_width = bin_width,
+          lmtp_learners = lmtp_learners,
+          run_lmtp = run_lmtp, run_cox_td = run_cox_td,
+          dgp_args = dgp_args
+        )
+      })
+
+      stopCluster(cl)
+      on.exit(NULL)  # clear the on.exit since we stopped manually
+
+      est_res <- bind_rows(iter_results)
+    } else {
+      # ── Serial fallback ──
+      pb <- txtProgressBar(min = 0, max = n_iter, style = 3)
+      est_res <- NULL
+      for (i in seq_len(n_iter)) {
+        iter_res <- run_one_iter(
+          i, estimand = est, sample_size = sample_size,
+          tau = tau, bin_width = bin_width,
+          lmtp_learners = lmtp_learners,
+          run_lmtp = run_lmtp, run_cox_td = run_cox_td,
+          dgp_args = dgp_args
+        )
+        est_res <- bind_rows(est_res, iter_res)
+        setTxtProgressBar(pb, i)
+      }
+      close(pb)
     }
-    close(pb)
+
+    message("    Done: ", nrow(est_res), " rows")
+    all_res <- bind_rows(all_res, est_res)
   }
 
   if (!is.null(cache_file)) {
