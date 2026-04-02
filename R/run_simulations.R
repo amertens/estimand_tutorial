@@ -204,22 +204,24 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
       cl <- makeCluster(n_cores)
       on.exit(stopCluster(cl), add = TRUE)
 
-      # Export required functions and packages to workers
+      # Load all packages and source all project scripts on each worker.
+      # Sourcing run_simulations.R on workers is safe because makeCluster
+      # is only called inside run_simulation_study(), not at file level.
       clusterEvalQ(cl, {
         suppressPackageStartupMessages({
           library(dplyr)
           library(survival)
+          library(broom)
           library(here)
+          library(parallel)
           library(lmtp)
           library(SuperLearner)
           library(arm)
         })
         source(here("DGP.R"))
         source(here("R", "helpers.R"))
+        source(here("R", "run_simulations.R"))
       })
-
-      # Export run_one_iter (defined in this file, not in helpers.R)
-      clusterExport(cl, "run_one_iter", envir = environment())
 
       iter_results <- parLapply(cl, seq_len(n_iter), function(i) {
         run_one_iter(
