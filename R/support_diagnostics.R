@@ -149,14 +149,68 @@ summarize_support <- function(dat, scenario_label = "Default") {
 
 
 # ── Multi-scenario support plot ──────────────────────────────────────────────
-#' Create a faceted PS overlap plot across multiple scenarios.
+#' Create a faceted support diagnostic plot across multiple scenarios.
+#' Shows switching probability distributions by treatment and CKD status,
+#' which is what actually varies across support scenarios (treatment PS
+#' is identical because only switching parameters change).
 #' @param scenario_list named list of data.frames, each from DGP.
 #' @return ggplot object.
 plot_support_scenarios <- function(scenario_list) {
+  sw_col <- "switched"
+
   combined <- bind_rows(lapply(names(scenario_list), function(nm) {
     d <- scenario_list[[nm]]
-    covars <- intersect(c("age", "ckd", "cirrhosis", "diabetes", "hiv",
-                          "hypertension", "bmi"), names(d))
+    if (!"switched" %in% names(d)) sw_col <<- "switch"
+
+    # Fit switching model
+    covars <- intersect(c("age", "ckd", "treatment", "cirrhosis", "diabetes"),
+                        names(d))
+    fml <- as.formula(paste(sw_col, "~", paste(covars, collapse = " + ")))
+    sw_mod <- glm(fml, data = d, family = binomial)
+    d$p_switch <- predict(sw_mod, type = "response")
+    d$scenario <- nm
+    d$trt_label <- ifelse(d$treatment == 1, "Active", "Comparator")
+    d$ckd_label <- ifelse(d$ckd == 1, "CKD", "No CKD")
+    d %>% select(id, treatment, trt_label, ckd_label, p_switch,
+                 scenario, all_of(sw_col))
+  }))
+
+  # Panel 1: Switching probability by treatment arm
+  p1 <- ggplot(combined, aes(x = p_switch, fill = trt_label)) +
+    geom_histogram(alpha = 0.5, bins = 40, position = "identity") +
+    facet_wrap(~ scenario, scales = "free_y", ncol = 1) +
+    labs(x = "Predicted P(Switch | Baseline)", y = "Count",
+         fill = "Treatment",
+         title = "Switching Probability by Treatment Arm") +
+    theme_minimal(base_size = 11) +
+    scale_fill_manual(values = c("tomato", "steelblue")) +
+    theme(legend.position = "bottom")
+
+  # Panel 2: Switching probability by CKD status
+  p2 <- ggplot(combined, aes(x = p_switch, fill = ckd_label)) +
+    geom_histogram(alpha = 0.5, bins = 40, position = "identity") +
+    facet_wrap(~ scenario, scales = "free_y", ncol = 1) +
+    labs(x = "Predicted P(Switch | Baseline)", y = "Count",
+         fill = "CKD Status",
+         title = "Switching Probability by CKD Status") +
+    theme_minimal(base_size = 11) +
+    scale_fill_manual(values = c("darkorange", "dodgerblue")) +
+    theme(legend.position = "bottom")
+
+  # Return both; caller can use patchwork or gridExtra to combine
+  list(by_treatment = p1, by_ckd = p2)
+}
+
+
+#' Create a faceted treatment PS overlap plot across scenarios.
+#' Useful when treatment assignment parameters vary across scenarios.
+#' @param scenario_list named list of data.frames.
+#' @return ggplot object.
+plot_ps_overlap_scenarios <- function(scenario_list) {
+  combined <- bind_rows(lapply(names(scenario_list), function(nm) {
+    d <- scenario_list[[nm]]
+    covars <- intersect(c("age", "ckd", "cirrhosis", "diabetes",
+                          "hypertension"), names(d))
     fml <- as.formula(paste("treatment ~", paste(covars, collapse = " + ")))
     ps_mod <- glm(fml, data = d, family = binomial)
     d$ps <- predict(ps_mod, type = "response")
@@ -170,7 +224,7 @@ plot_support_scenarios <- function(scenario_list) {
     facet_wrap(~ scenario, scales = "free_y", ncol = 1) +
     labs(x = "Estimated P(Active | Baseline)", y = "Count",
          fill = "Treatment",
-         title = "Data Support Diagnostic: Propensity Score Overlap") +
+         title = "Treatment Propensity Score Overlap") +
     theme_minimal(base_size = 11) +
     scale_fill_manual(values = c("steelblue", "tomato")) +
     theme(legend.position = "bottom")

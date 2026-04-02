@@ -537,11 +537,13 @@ dat_poor <- generate_hep_data(
 )
 ```
 
-### Propensity Score Overlap
+### Switching Probability Diagnostics
+
+The three scenarios differ in switching parameters, not in treatment assignment. The relevant diagnostic is therefore the distribution of **predicted switching probabilities**, not treatment propensity scores (which are identical across scenarios because the treatment assignment model does not change).
 
 ```{r}
-#| label: fig-support-ps
-#| fig-cap: "Data support diagnostic: propensity score overlap across three support scenarios. As confounding strengthens, overlap deteriorates."
+#| label: fig-support-switch
+#| fig-cap: "Data support diagnostic: predicted switching probability by treatment arm across three support scenarios. As switching intensity increases, the active arm's switching probability distribution shifts rightward, creating informative censoring that biases conventional analyses."
 #| fig-height: 9
 #| fig-width: 7
 
@@ -551,7 +553,17 @@ scenario_list <- list(
   "3. Poor support" = dat_poor
 )
 
-plot_support_scenarios(scenario_list)
+support_plots <- plot_support_scenarios(scenario_list)
+support_plots$by_treatment
+```
+
+```{r}
+#| label: fig-support-ckd
+#| fig-cap: "Switching probability by CKD status across scenarios. Under poor support, CKD patients have near-certain switching, violating the positivity assumption for estimands that require modelling the switching mechanism."
+#| fig-height: 9
+#| fig-width: 7
+
+support_plots$by_ckd
 ```
 
 ### Support Summary Table
@@ -584,11 +596,12 @@ support_results <- readRDS(support_cache)
 kable(support_results, digits = 4, format = "pipe")
 ```
 
-Under good support, all methods produce estimates. As support degrades:
+Under good support (12% switching), all methods produce estimates. As support degrades:
 
-- Cox HRs become unstable and may shift toward the null (censor-at-switch removes the highest-risk patients)
-- LMTP estimates may show larger standard errors, instability, or convergence warnings
-- The practical lesson: identification may be conceptually valid while estimation fails due to lack of empirical support
+- The switching probability distribution shifts dramatically: under poor support, ~67% of patients switch and CKD patients switch near-deterministically
+- Cox censor-at-switch HR diverges from naive (2.27 vs 1.39 under poor support) because censoring at switch removes a large, non-random fraction of the active arm
+- LMTP estimates show increasing negative bias and wider confidence intervals as the censoring model must extrapolate further
+- The practical lesson: identification may be conceptually valid while estimation fails due to lack of empirical support for the switching adjustment
 
 ::: {.callout-warning}
 ## Identification vs. estimation
@@ -741,30 +754,6 @@ This tutorial does not implement a full sensitivity analysis, but the causal roa
 
 <!-- TODO(Joy): implement a nonparametric sensitivity analysis function and
      add a worked example to the simulation study. -->
-
-## Continuous-Time TMLE as an Alternative
-
-The `lmtp` analyses in this tutorial discretise the 180-day follow-up into biweekly bins, creating ~13 outcome and censoring columns per subject. This is a pragmatic choice that trades temporal resolution for computational feasibility, but it raises a legitimate concern: discretisation has been shown to affect estimator performance, and the choice of bin width is itself a tuning parameter that can influence results (Rytgaard et al. 2023).
-
-The `concrete` R package (Chen et al. 2023) implements a continuous-time TMLE that avoids discretisation entirely. It works directly with cause-specific hazards on the continuous time scale, targets cause-specific absolute risks (cumulative incidence) under intervention, and provides simultaneous confidence bands across multiple target times. It also handles competing risks natively---for example, death before renal failure---which the current tutorial does not address.
-
-However, `concrete` is designed for **baseline (point) treatment** interventions only. It cannot currently handle time-varying treatments or longitudinal treatment regimes. Because treatment switching is inherently a time-varying treatment problem---the patient's effective treatment changes at the switch time---`concrete` cannot directly target the treatment-policy or hypothetical no-switch estimands as defined in this tutorial. For an intention-to-treat estimand that compares groups as initially assigned (ignoring switching entirely), `concrete` would be a strong alternative that avoids discretisation artifacts and adds competing risks support.
-
-In summary:
-
-| Feature | `lmtp` | `concrete` |
-|---|---|---|
-| Time scale | Discrete (binned) | Continuous |
-| Treatment type | Time-varying, continuous, binary | Baseline binary only |
-| Switching/ICE handling | Yes (modified treatment policies) | No (point treatment) |
-| Competing risks | No | Yes |
-| Double robustness | Yes (SDR estimator) | Yes (one-step TMLE) |
-
-For the estimands in this tutorial---which are defined by how switching is handled---`lmtp` remains the appropriate choice. A complete analysis might use `concrete` for the baseline-treatment ITT estimand (avoiding discretisation and incorporating competing risks) alongside `lmtp` for the treatment-policy and hypothetical no-switch estimands. Future development of `concrete` for longitudinal treatments could eventually unify these approaches.
-
-<!-- TODO(Joy): consider adding a concrete analysis for the ITT estimand
-     as a comparison. The archive already contains a run_concrete_tmle()
-     wrapper in R/archive_functions.R. -->
 
 ## Key Messages
 
