@@ -36,8 +36,8 @@ N_CORES <- 8L
 #' @return data.frame with one row per method.
 run_one_iter <- function(i, estimand = "treatment_policy",
                          sample_size = 1000, tau = 180,
-                         bin_width = 30,
-                         lmtp_learners = c("SL.mean", "SL.bayesglm"),
+                         bin_width = 14,
+                         lmtp_learners = c("SL.mean", "SL.glm", "SL.bayesglm"),
                          run_lmtp = TRUE, run_cox_td = FALSE,
                          dgp_args = list()) {
   set.seed(1000 + i)
@@ -102,11 +102,34 @@ run_one_iter <- function(i, estimand = "treatment_policy",
   }
 
   # ── D. LMTP SDR ──
+  # Estimand-specific LMTP handling:
+  #   treatment_policy:   static on/off on full data (default)
+  #   no_switch:          static on/off on data generated without switching
+  #   while_on_treatment: static on/off; DGP censors at switch, LMTP
+  #                       censoring model accounts for this
+  #   composite:          static on/off; outcome = AKI or switch (already
+  #                       encoded in DGP event column under composite policy)
+  #   principal_stratum:  subset to observed non-switchers, then static on/off.
+  #                       This is an approximation -- the true principal stratum
+  #                       requires both potential switching indicators.
   if (run_lmtp) {
     results[["lmtp"]] <- tryCatch({
       requireNamespace("lmtp", quietly = TRUE)
-      prep <- prepare_lmtp_data(dat, tau = tau, bin_width = bin_width)
+
+      # For principal stratum: restrict to observed non-switchers
+      lmtp_dat <- if (estimand == "principal_stratum") {
+        dat[dat$switched == 0, ]
+      } else {
+        dat
+      }
+
+      # Check we have enough data and events
+      n_events <- sum(lmtp_dat$event == 1 & lmtp_dat$follow_time <= tau)
+      if (n_events < 5) stop("Too few events for LMTP: ", n_events)
+
+      prep <- prepare_lmtp_data(lmtp_dat, tau = tau, bin_width = bin_width)
       res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+
       # Handle both old ($vals$theta) and new ($estimates$estimate) lmtp API
       rd_obj <- res$contrast_rd
       rd_est <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$estimate
@@ -117,8 +140,15 @@ run_one_iter <- function(i, estimand = "treatment_policy",
       rr_obj <- res$contrast_rr
       rr_est <- if (!is.null(rr_obj$estimates)) rr_obj$estimates$estimate
                 else rr_obj$vals$theta
+
+      method_label <- if (estimand == "principal_stratum") {
+        "LMTP SDR (non-switchers)"
+      } else {
+        "LMTP SDR"
+      }
+
       data.frame(
-        method = "LMTP SDR", hr = NA_real_,
+        method = method_label, hr = NA_real_,
         ci_low = rd_ci[1], ci_high = rd_ci[2],
         risk_diff = rd_est, risk_ratio = rr_est, converged = TRUE
       )
@@ -148,8 +178,8 @@ run_one_iter <- function(i, estimand = "treatment_policy",
 #' @param cache_file character or NULL; path to cache results.
 #' @return data.frame of aggregated results.
 run_simulation_study <- function(n_iter = 200, sample_size = 1000,
-                                 tau = 180, bin_width = 30,
-                                 lmtp_learners = c("SL.mean", "SL.bayesglm"),
+                                 tau = 180, bin_width = 14,
+                                 lmtp_learners = c("SL.mean", "SL.glm", "SL.bayesglm"),
                                  estimands = c("treatment_policy", "no_switch"),
                                  run_lmtp = TRUE, run_cox_td = FALSE,
                                  n_cores = N_CORES,

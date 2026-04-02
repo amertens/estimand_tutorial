@@ -25,7 +25,7 @@ dir.create(here("results", "sim_results"), showWarnings = FALSE, recursive = TRU
 tau <- 180
 # Weekly bins: ~26 time points instead of 180. Major speedup for LMTP.
 # Set to 1 for daily resolution in production analyses.
-BIN_WIDTH <- 30
+BIN_WIDTH <- 14
 
 # ── 1. Ground truth (five estimands) ─────────────────────────────────────────
 # Fast (~3-5 min) -- pure DGP simulation, no LMTP.
@@ -83,7 +83,7 @@ if (!file.exists(lmtp_cache)) {
   requireNamespace("SuperLearner", quietly = TRUE)
   requireNamespace("arm", quietly = TRUE)
 
-  SL_LIBRARY <- c("SL.mean", "SL.bayesglm")
+  SL_LIBRARY <- c("SL.mean", "SL.glm", "SL.bayesglm")
 
   set.seed(2026)
   dat <- generate_hep_data(
@@ -158,7 +158,7 @@ if (!file.exists(support_cache)) {
     lmtp_rd <- tryCatch({
       prep <- prepare_lmtp_data(d, tau = tau, bin_width = BIN_WIDTH)
       res <- run_lmtp_analysis(prep, folds = 2,
-                               learners = c("SL.mean", "SL.bayesglm"))
+                               learners = c("SL.mean", "SL.glm", "SL.bayesglm"))
       res$contrast_rd$estimates$estimate
     }, error = function(e) NA_real_)
 
@@ -182,10 +182,10 @@ if (!file.exists(support_cache)) {
 # 10 iters x 2 estimands x N=10000 with weekly bins
 sim_cache <- here("results", "sim_study_main.rds")
 if (!file.exists(sim_cache)) {
-  message("\n=== Running simulation study (10 iters x 5 estimands, N=10000) ===")
-  message("    (Increase n_iter for production; 10 is for fast iteration)")
+  message("\n=== Running simulation study (20 iters x 5 estimands, N=10000) ===")
+  message("    (Increase n_iter for production; 20 is for debugging)")
   sim_results <- run_simulation_study(
-    n_iter      = 10,
+    n_iter      = 20,
     sample_size = 10000,
     tau         = tau,
     bin_width   = BIN_WIDTH,
