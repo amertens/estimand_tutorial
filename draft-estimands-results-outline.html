@@ -130,8 +130,6 @@ window.Quarto = {
 TODO(Joy): verify exact variable mapping from DGP.R to chapter notation.
 TODO(Joy): refine hepatitis B DGP parameters to match realistic renal-failure
   incidence in tenofovir vs entecavir from the literature.
-TODO(Joy): replace placeholder intervention function with the final
-  study-specific rule if needed.
 TODO(Joy): decide whether to include the time-dependent Cox model in the
   main presentation or relegate it to an appendix.
 -->
@@ -139,17 +137,9 @@ TODO(Joy): decide whether to include the time-dependent Cox model in the
 <h1>Estimand-Estimator Alignment in Time-to-Event Safety Analyses</h1>
 <section id="introduction" class="level2">
 <h2 class="anchored" data-anchor-id="introduction">Introduction</h2>
-<p>In real-world safety studies, the question “Does this drug increase the risk of adverse events?” requires a precise definition of the causal quantity being estimated. The ICH E9(R1) addendum formalises this through the <strong>estimand framework</strong>, which requires specifying how intercurrent events—treatment switching, discontinuation, death from other causes—are handled. Each strategy defines a different estimand, and each estimand demands a compatible estimator.</p>
-<p>The central problem this chapter addresses is not which estimand to choose. Rather, it is that <strong>conventional regression analyses often fail to target the stated estimand</strong> when intercurrent events are present. A naive Cox model that ignores switching, or one that censors at switching, may appear to estimate a treatment effect, but the quantity it targets can be misaligned with the scientific question. Longitudinal targeted learning via <code>lmtp</code> offers a principled alternative that directly targets the intervention-defined estimand and adjusts for time-varying confounding.</p>
-<p>This chapter focuses on two estimands—the <strong>treatment-policy</strong> estimand and the <strong>hypothetical no-switch</strong> estimand—and demonstrates how to align (or misalign) estimators with each. The goal is not to compare estimands against each other, but to ensure that the chosen estimator matches the causal question.</p>
-<p>This chapter follows the structure of the <strong>causal roadmap</strong> for generating high-quality real-world evidence (Dang et al.&nbsp;2023; Petersen 2014). The roadmap proceeds through: (1) defining the causal question and estimand as a function of counterfactual outcomes—not as a regression coefficient; (2) specifying a causal model (DAG); (3) assessing identifiability under exchangeability, positivity, and consistency; (4) defining the statistical estimand; (5) choosing an estimator; and (6) conducting sensitivity analyses. This tutorial concentrates on steps 1, 3–5: defining estimands, diagnosing support, and aligning estimators. A key principle of the roadmap is that the estimand should be defined mathematically before any statistical method is chosen, and that the gap between the causal estimand and the statistical estimand should be made explicit.</p>
-<p><strong>Goals:</strong></p>
-<ol type="1">
-<li>Define the treatment-policy and hypothetical no-switch estimands under the ICH E9(R1) framework</li>
-<li>Show how conventional Cox regression analyses can fail to target these estimands</li>
-<li>Demonstrate how <code>lmtp</code>-based longitudinal targeted learning can better align estimation with the stated estimand</li>
-<li>Diagnose when empirical support for a target intervention is inadequate</li>
-</ol>
+<p>In post-marketing safety studies, the question “Does this drug increase the risk of adverse events?” cannot be answered without first specifying how intercurrent events—treatment switching, discontinuation, death from other causes—are handled. The ICH E9(R1) addendum formalises this requirement through the estimand framework: five elements (population, treatment, outcome, intercurrent events, and strategy) must be specified before analysis. Different strategies for handling the same intercurrent event define different estimands, and different estimands require compatible estimators.</p>
+<p>This chapter examines whether conventional regression analyses succeed in estimating the stated estimand when treatment switching is present. We focus on two estimands—the treatment-policy and hypothetical no-switch strategies—because they most clearly illustrate the consequences of using a mismatched estimator. Three additional ICH E9(R1) strategies (while-on-treatment, composite, and principal stratum) are defined for context and included in the simulation, but receive less detailed treatment. A simulated hepatitis B safety study provides the running example throughout.</p>
+<p>The analysis follows the causal roadmap for real-world evidence generation (Dang et al.&nbsp;2023; Petersen 2014), which proceeds through defining the causal question, specifying a causal model, assessing identifiability, defining the statistical estimand, choosing an estimator, and conducting sensitivity analyses. This chapter concentrates on defining estimands, diagnosing empirical support, and comparing estimators.</p>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(tidyverse)</span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(survival)</span>
@@ -161,49 +151,30 @@ TODO(Joy): decide whether to include the time-dependent Cox model in the
 <span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">source</span>(<span class="fu">here</span>(<span class="st">"R"</span>, <span class="st">"helpers.R"</span>))</span>
 <span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="fu">source</span>(<span class="fu">here</span>(<span class="st">"R"</span>, <span class="st">"support_diagnostics.R"</span>))</span>
 <span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Check that cached results exist (run R/run_cached_analyses.R first)</span></span>
-<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>cache_files <span class="ot">&lt;-</span> <span class="fu">c</span>(</span>
-<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"lmtp_main.rds"</span>),</span>
-<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"support_estimation.rds"</span>),</span>
-<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"sim_study_main.rds"</span>),</span>
-<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"sim_results"</span>, <span class="st">"ground_truth.rds"</span>)</span>
-<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>missing <span class="ot">&lt;-</span> cache_files[<span class="sc">!</span><span class="fu">file.exists</span>(cache_files)]</span>
-<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> (<span class="fu">length</span>(missing) <span class="sc">&gt;</span> <span class="dv">0</span>) {</span>
-<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">warning</span>(<span class="st">"Missing cached results. Run R/run_cached_analyses.R first:</span><span class="sc">\n</span><span class="st">"</span>,</span>
-<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>          <span class="fu">paste</span>(<span class="st">" "</span>, <span class="fu">basename</span>(missing), <span class="at">collapse =</span> <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>))</span>
-<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>cache_files <span class="ot">&lt;-</span> <span class="fu">c</span>(</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"lmtp_main.rds"</span>),</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"support_estimation.rds"</span>),</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"sim_study_main.rds"</span>),</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"sim_results"</span>, <span class="st">"ground_truth.rds"</span>)</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a>missing <span class="ot">&lt;-</span> cache_files[<span class="sc">!</span><span class="fu">file.exists</span>(cache_files)]</span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> (<span class="fu">length</span>(missing) <span class="sc">&gt;</span> <span class="dv">0</span>) {</span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>  <span class="fu">warning</span>(<span class="st">"Missing cached results. Run R/run_cached_analyses.R first:</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a>          <span class="fu">paste</span>(<span class="st">" "</span>, <span class="fu">basename</span>(missing), <span class="at">collapse =</span> <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>))</span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
 </section>
 <section id="the-hepatitis-b-safety-example" class="level2">
 <h2 class="anchored" data-anchor-id="the-hepatitis-b-safety-example">The Hepatitis B Safety Example</h2>
-<p>We use a simulated post-marketing safety study comparing two hepatitis B antiviral regimens for the risk of <strong>renal failure</strong> (the safety endpoint). The setting is motivated by real concerns about nephrotoxicity associated with tenofovir-containing regimens relative to entecavir-based alternatives in patients with chronic hepatitis B.</p>
-<p>Key features of the example:</p>
-<ul>
-<li><strong>Two treatments:</strong> an active regimen (analogous to tenofovir-containing therapy) and a comparator (analogous to entecavir-based therapy), with confounded treatment assignment driven by baseline renal function (CKD), cirrhosis severity, and age.</li>
-<li><strong>Intercurrent event:</strong> informative treatment switching. Patients on the active regimen who develop early signs of renal impairment may switch to the comparator. Because CKD drives both switching and renal failure, switching is informative.</li>
-<li><strong>Outcome:</strong> time to renal failure (or a composite renal endpoint), observed over a 180-day risk window.</li>
-<li><strong>Baseline confounders:</strong> demographics (age, sex, race), comorbidities (CKD, diabetes, hypertension, cirrhosis, heart failure), and co-medications (NSAIDs, ACE/ARBs, statins).</li>
-</ul>
-<p>This example illustrates a realistic scenario in which informative switching invalidates naive regression approaches and where the choice of estimand strategy has concrete consequences for the analysis.</p>
+<p>We use a simulated post-marketing safety study comparing two hepatitis B antiviral regimens for the risk of renal failure. The setting draws on concerns about nephrotoxicity in tenofovir-containing regimens relative to entecavir-based alternatives.</p>
+<p>The simulated cohort includes an active regimen (analogous to tenofovir) and a comparator (analogous to entecavir), with confounded treatment assignment driven by baseline CKD, cirrhosis, and age. The primary intercurrent event is informative treatment switching: patients on the active regimen who develop early renal signals may switch to the comparator. Because CKD drives both switching and renal failure, switching is informative—the patients who switch are those at greatest risk.</p>
+<p>Baseline confounders include demographics (age, sex, race), comorbidities (CKD, diabetes, hypertension, cirrhosis, heart failure), and co-medications (NSAIDs, ACE/ARBs, statins). The outcome is time to renal failure observed over a 180-day risk window.</p>
 <!-- TODO(Joy): add one paragraph with real-data references if a project-approved
      example from the hepatitis B nephrotoxicity literature is available. -->
 </section>
-<section id="the-regulatory-context-ich-e9r1" class="level2">
-<h2 class="anchored" data-anchor-id="the-regulatory-context-ich-e9r1">The Regulatory Context: ICH E9(R1)</h2>
-<p>The ICH E9(R1) addendum (2019) requires explicit specification of five elements for any clinical or post-marketing estimand:</p>
-<ol type="1">
-<li><strong>The population</strong> of interest</li>
-<li><strong>The treatment</strong> conditions being compared</li>
-<li><strong>The outcome</strong> variable</li>
-<li><strong>The intercurrent events</strong> that may occur after treatment initiation</li>
-<li><strong>The strategy</strong> for handling each intercurrent event</li>
-</ol>
-<p>When 15–20% of patients on the active regimen switch due to early renal signals, and when patients with CKD are more likely to both switch and develop renal failure, the strategy used to handle switching defines fundamentally different estimands—and different estimands require different estimators.</p>
-</section>
 <section id="the-data-generating-process" class="level2">
 <h2 class="anchored" data-anchor-id="the-data-generating-process">The Data-Generating Process</h2>
-<p>We use <code>generate_hep_data()</code> from the project DGP to simulate realistic post-marketing safety data. The DGP produces a cohort of patients eligible for one of two hepatitis B treatments, with renal failure as the safety endpoint.</p>
+<p>The function <code>generate_hep_data()</code> simulates the cohort. Key components are summarised in the table below.</p>
 <table class="caption-top table">
 <colgroup>
 <col style="width: 50%">
@@ -211,38 +182,30 @@ TODO(Joy): decide whether to include the time-dependent Cox model in the
 </colgroup>
 <thead>
 <tr class="header">
-<th>DGP Component</th>
+<th>Component</th>
 <th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td><strong>Baseline covariates</strong></td>
-<td>Demographics (age, sex, race); comorbidities (CKD, diabetes, hypertension, cirrhosis, heart failure); co-medications (NSAIDs, ACE/ARBs, statins)</td>
+<td><strong>Treatment assignment</strong></td>
+<td>Active vs comparator, confounded by CKD, cirrhosis, age; nonlinear interactions when <code>complexity=TRUE</code></td>
 </tr>
 <tr class="even">
-<td><strong>Treatment assignment</strong></td>
-<td>Active vs comparator, confounded by CKD, cirrhosis, age, and (when <code>complexity=TRUE</code>) nonlinear covariate interactions</td>
+<td><strong>Event process</strong></td>
+<td>Piecewise exponential hazard; HR = 1.25 before day 45 and HR = 0.70 after (non-proportional hazards)</td>
 </tr>
 <tr class="odd">
-<td><strong>Event process</strong></td>
-<td>Piecewise exponential renal-failure hazard; when <code>np_hazard=TRUE</code>, HR = 1.25 early and HR = 0.70 late (non-proportional hazards)</td>
-</tr>
-<tr class="even">
 <td><strong>Switching process</strong></td>
 <td>Hazard-based informative switching driven by treatment and CKD</td>
 </tr>
-<tr class="odd">
-<td><strong>Censoring process</strong></td>
-<td>When <code>dep_censor=TRUE</code>, censoring depends on baseline risk; otherwise administrative censoring only</td>
+<tr class="even">
+<td><strong>Censoring</strong></td>
+<td>Dependent on baseline risk when <code>dep_censor=TRUE</code>; otherwise administrative only</td>
 </tr>
 </tbody>
 </table>
-<p>The DGP accepts a <code>policy</code> argument:</p>
-<ul>
-<li><code>policy = "treatment_policy"</code>: switching occurs but does <strong>not</strong> censor. Subjects are followed until event or administrative censoring regardless of switching.</li>
-<li><code>policy = "no_switch"</code>: no switching occurs. This generates potential outcomes under the hypothetical world where nobody switches.</li>
-</ul>
+<p>The <code>policy</code> argument controls how switching affects follow-up. Under <code>"treatment_policy"</code>, switching occurs but does not censor—subjects are followed until the event or administrative censoring regardless of switching. Under <code>"no_switch"</code>, switching is suppressed entirely, generating potential outcomes for the hypothetical world where nobody switches. Additional policies (<code>"while_on_treatment"</code>, <code>"composite"</code>, <code>"principal_stratum"</code>) are available for the remaining estimands.</p>
 <!-- TODO(Joy): verify exact variable mapping from DGP.R to chapter notation -->
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">2026</span>)</span>
@@ -253,53 +216,68 @@ TODO(Joy): decide whether to include the time-dependent Cox model in the
 <span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">complexity  =</span> <span class="cn">TRUE</span>,</span>
 <span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">policy      =</span> <span class="st">"treatment_policy"</span>,</span>
 <span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">seed        =</span> <span class="dv">2026</span></span>
-<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"N:"</span>, <span class="fu">nrow</span>(dat), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; N: 10000</span></span>
-<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Event rate:"</span>, <span class="fu">round</span>(<span class="fu">mean</span>(dat<span class="sc">$</span>event), <span class="dv">4</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Event rate: 0.0763</span></span>
-<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Switch rate:"</span>, <span class="fu">round</span>(<span class="fu">mean</span>(dat<span class="sc">$</span>switched), <span class="dv">4</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Switch rate: 0.1173</span></span>
-<span id="cb3-17"><a href="#cb3-17" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Switch rate (active + CKD):"</span>,</span>
-<span id="cb3-18"><a href="#cb3-18" aria-hidden="true" tabindex="-1"></a>    <span class="fu">round</span>(<span class="fu">mean</span>(dat<span class="sc">$</span>switched[dat<span class="sc">$</span>treatment <span class="sc">==</span> <span class="dv">1</span> <span class="sc">&amp;</span> dat<span class="sc">$</span>ckd <span class="sc">==</span> <span class="dv">1</span>]), <span class="dv">4</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb3-19"><a href="#cb3-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Switch rate (active + CKD): 0.2256</span></span>
-<span id="cb3-20"><a href="#cb3-20" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Switch rate (comparator):"</span>,</span>
-<span id="cb3-21"><a href="#cb3-21" aria-hidden="true" tabindex="-1"></a>    <span class="fu">round</span>(<span class="fu">mean</span>(dat<span class="sc">$</span>switched[dat<span class="sc">$</span>treatment <span class="sc">==</span> <span class="dv">0</span>]), <span class="dv">4</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb3-22"><a href="#cb3-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Switch rate (comparator): 0.0877</span></span>
-<span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Median follow-up:"</span>, <span class="fu">round</span>(<span class="fu">median</span>(dat<span class="sc">$</span>follow_time), <span class="dv">1</span>), <span class="st">"days</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb3-24"><a href="#cb3-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Median follow-up: 62.7 days</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-<p>Switching is driven by both treatment assignment and CKD status. Patients on the active regimen with CKD switch at the highest rate. Because CKD also increases renal failure risk, switching is <strong>informative</strong>: the patients who switch are those at greatest risk for the outcome.</p>
+<div class="cell" data-layout-align="center">
+<div class="cell-output-display">
+<table class="caption-top table table-sm table-striped small">
+<thead>
+<tr class="header">
+<th style="text-align: left;">Quantity</th>
+<th style="text-align: right;">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">N</td>
+<td style="text-align: right;">1.000e+04</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Event rate</td>
+<td style="text-align: right;">7.630e-02</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">Switch rate</td>
+<td style="text-align: right;">1.173e-01</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Switch rate (active + CKD)</td>
+<td style="text-align: right;">2.256e-01</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">Switch rate (comparator)</td>
+<td style="text-align: right;">8.770e-02</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Median follow-up (days)</td>
+<td style="text-align: right;">6.270e+01</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(dagitty)</span>
-<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Warning: package 'dagitty' was built under R version 4.4.3</span></span>
-<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(ggdag)</span>
-<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Warning: package 'ggdag' was built under R version 4.4.3</span></span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Attaching package: 'ggdag'</span></span>
-<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; The following object is masked from 'package:stats':</span></span>
-<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; </span></span>
-<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;     filter</span></span>
-<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>dag_safety <span class="ot">&lt;-</span> <span class="fu">dagify</span>(</span>
-<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>  Treatment <span class="sc">~</span> W,</span>
-<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>  Switch <span class="sc">~</span> Treatment <span class="sc">+</span> W,</span>
-<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a>  Censoring <span class="sc">~</span> Switch <span class="sc">+</span> W,</span>
-<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>  RenalFailure <span class="sc">~</span> Treatment <span class="sc">+</span> Switch <span class="sc">+</span> W,</span>
-<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a>  <span class="at">exposure =</span> <span class="st">"Treatment"</span>, <span class="at">outcome =</span> <span class="st">"RenalFailure"</span>,</span>
-<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a>  <span class="at">labels =</span> <span class="fu">c</span>(<span class="at">W =</span> <span class="st">"Baseline</span><span class="sc">\n</span><span class="st">confounders</span><span class="sc">\n</span><span class="st">(CKD, age, ...)"</span>,</span>
-<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a>             <span class="at">Treatment =</span> <span class="st">"Treatment</span><span class="sc">\n</span><span class="st">(active vs comparator)"</span>,</span>
-<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>             <span class="at">Switch =</span> <span class="st">"Regimen</span><span class="sc">\n</span><span class="st">switch"</span>,</span>
-<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a>             <span class="at">Censoring =</span> <span class="st">"Censoring"</span>,</span>
-<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a>             <span class="at">RenalFailure =</span> <span class="st">"Renal</span><span class="sc">\n</span><span class="st">failure"</span>),</span>
-<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a>  <span class="at">coords =</span> <span class="fu">list</span>(</span>
-<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a>    <span class="at">x =</span> <span class="fu">c</span>(<span class="at">W =</span> <span class="dv">1</span>, <span class="at">Treatment =</span> <span class="dv">0</span>, <span class="at">Switch =</span> <span class="dv">1</span>, <span class="at">Censoring =</span> <span class="dv">2</span>, <span class="at">RenalFailure =</span> <span class="fl">1.5</span>),</span>
-<span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a>    <span class="at">y =</span> <span class="fu">c</span>(<span class="at">W =</span> <span class="dv">1</span>, <span class="at">Treatment =</span> <span class="dv">0</span>, <span class="at">Switch =</span> <span class="dv">0</span>, <span class="at">Censoring =</span> <span class="dv">0</span>, <span class="at">RenalFailure =</span> <span class="sc">-</span><span class="dv">1</span>)</span>
-<span id="cb4-25"><a href="#cb4-25" aria-hidden="true" tabindex="-1"></a>  )</span>
-<span id="cb4-26"><a href="#cb4-26" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb4-27"><a href="#cb4-27" aria-hidden="true" tabindex="-1"></a><span class="fu">ggdag</span>(dag_safety, <span class="at">text =</span> <span class="cn">FALSE</span>, <span class="at">use_labels =</span> <span class="st">"label"</span>, <span class="at">text_size =</span> <span class="dv">3</span>) <span class="sc">+</span></span>
-<span id="cb4-28"><a href="#cb4-28" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_dag</span>()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(ggdag)</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>dag_safety <span class="ot">&lt;-</span> <span class="fu">dagify</span>(</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  Treatment <span class="sc">~</span> W,</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>  Switch <span class="sc">~</span> Treatment <span class="sc">+</span> W,</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>  Censoring <span class="sc">~</span> Switch <span class="sc">+</span> W,</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>  RenalFailure <span class="sc">~</span> Treatment <span class="sc">+</span> Switch <span class="sc">+</span> W,</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">exposure =</span> <span class="st">"Treatment"</span>, <span class="at">outcome =</span> <span class="st">"RenalFailure"</span>,</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">labels =</span> <span class="fu">c</span>(<span class="at">W =</span> <span class="st">"Baseline</span><span class="sc">\n</span><span class="st">confounders</span><span class="sc">\n</span><span class="st">(CKD, age, ...)"</span>,</span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>             <span class="at">Treatment =</span> <span class="st">"Treatment</span><span class="sc">\n</span><span class="st">(active vs comparator)"</span>,</span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>             <span class="at">Switch =</span> <span class="st">"Regimen</span><span class="sc">\n</span><span class="st">switch"</span>,</span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>             <span class="at">Censoring =</span> <span class="st">"Censoring"</span>,</span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a>             <span class="at">RenalFailure =</span> <span class="st">"Renal</span><span class="sc">\n</span><span class="st">failure"</span>),</span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>  <span class="at">coords =</span> <span class="fu">list</span>(</span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a>    <span class="at">x =</span> <span class="fu">c</span>(<span class="at">W =</span> <span class="dv">1</span>, <span class="at">Treatment =</span> <span class="dv">0</span>, <span class="at">Switch =</span> <span class="dv">1</span>, <span class="at">Censoring =</span> <span class="dv">2</span>, <span class="at">RenalFailure =</span> <span class="fl">1.5</span>),</span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a>    <span class="at">y =</span> <span class="fu">c</span>(<span class="at">W =</span> <span class="dv">1</span>, <span class="at">Treatment =</span> <span class="dv">0</span>, <span class="at">Switch =</span> <span class="dv">0</span>, <span class="at">Censoring =</span> <span class="dv">0</span>, <span class="at">RenalFailure =</span> <span class="sc">-</span><span class="dv">1</span>)</span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a>  )</span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a><span class="fu">ggdag</span>(dag_safety, <span class="at">text =</span> <span class="cn">FALSE</span>, <span class="at">use_labels =</span> <span class="st">"label"</span>, <span class="at">text_size =</span> <span class="dv">3</span>) <span class="sc">+</span></span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_dag</span>()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output-display">
 <div id="fig-dag" class="quarto-float quarto-figure quarto-figure-center anchored" data-fig-align="center">
 <figure class="quarto-float quarto-float-fig figure">
@@ -307,51 +285,21 @@ TODO(Joy): decide whether to include the time-dependent Cox model in the
 <img src="draft-estimands-results-outline_files/figure-html/fig-dag-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="768">
 </div>
 <figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-dag-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Figure&nbsp;1: Causal structure: baseline confounders (W) affect treatment, switching, censoring, and renal failure. Switching is informative because W (especially CKD) drives both switching and the outcome.
+Figure&nbsp;1: Causal structure. Baseline confounders (W) affect treatment, switching, censoring, and renal failure.
 </figcaption>
 </figure>
 </div>
 </div>
 </div>
 </section>
-<section id="five-estimand-strategies-under-ich-e9r1" class="level2">
-<h2 class="anchored" data-anchor-id="five-estimand-strategies-under-ich-e9r1">Five Estimand Strategies Under ICH E9(R1)</h2>
-<p>The ICH E9(R1) addendum defines five strategies for handling intercurrent events. In a safety study where the primary intercurrent event is treatment switching, each strategy answers a different clinical question. We define and simulate all five below.</p>
-<section id="estimand-1-treatment-policy" class="level3">
-<h3 class="anchored" data-anchor-id="estimand-1-treatment-policy">Estimand 1: Treatment-Policy</h3>
-<p><strong>Question:</strong> What is the risk of renal failure by 180 days comparing populations <em>initiated</em> on the active regimen versus the comparator, regardless of subsequent treatment changes?</p>
-<p><strong>Intercurrent event strategy:</strong> Ignore switching. Follow all patients from initiation regardless of what happens to their treatment.</p>
-<p><strong>Target parameter:</strong> <span class="math inline">\(\psi^{TP} = E[Y^{a=1}(180)] - E[Y^{a=0}(180)]\)</span>, where <span class="math inline">\(Y^a(t)\)</span> is the counterfactual renal-failure indicator under baseline initiation of regime <span class="math inline">\(a\)</span>, with all subsequent intercurrent events occurring as they naturally would.</p>
-</section>
-<section id="estimand-2-hypothetical-no-switch" class="level3">
-<h3 class="anchored" data-anchor-id="estimand-2-hypothetical-no-switch">Estimand 2: Hypothetical No-Switch</h3>
-<p><strong>Question:</strong> What <em>would</em> the risk of renal failure be by 180 days if, contrary to fact, no patients switched regimens?</p>
-<p><strong>Intercurrent event strategy:</strong> Model the hypothetical scenario in which switching does not occur. This requires identifying and adjusting for the time-varying confounders that drive both switching and the outcome.</p>
-<p><strong>Target parameter:</strong> <span class="math inline">\(\psi^{HYP} = E[Y^{a=1, \text{no switch}}(180)] - E[Y^{a=0, \text{no switch}}(180)]\)</span></p>
-</section>
-<section id="estimand-3-while-on-treatment" class="level3">
-<h3 class="anchored" data-anchor-id="estimand-3-while-on-treatment">Estimand 3: While-on-Treatment</h3>
-<p><strong>Question:</strong> What is the risk of renal failure while patients remain on their assigned treatment?</p>
-<p><strong>Intercurrent event strategy:</strong> Censor at the time of switching. Only events occurring before any switch contribute to the analysis.</p>
-<p><strong>Target parameter:</strong> <span class="math inline">\(\psi^{WOT} = E[Y^{a=1}(180) \mid \text{no switch by } 180] - E[Y^{a=0}(180) \mid \text{no switch by } 180]\)</span></p>
-<p>This estimand is clinically relevant: it captures the treatment effect during the period patients can actually tolerate therapy. When switching is informative, naive estimation (simply censoring at switch in a Cox model) is particularly susceptible to bias because the patients removed are those at highest risk. Inverse probability of censoring weighting (IPCW) or LMTP with a censoring model for switching can reduce this bias.</p>
-</section>
-<section id="estimand-4-composite" class="level3">
-<h3 class="anchored" data-anchor-id="estimand-4-composite">Estimand 4: Composite</h3>
-<p><strong>Question:</strong> What is the risk of renal failure <em>or</em> treatment switching (whichever comes first) by 180 days?</p>
-<p><strong>Intercurrent event strategy:</strong> Absorb switching into the outcome. Switching is treated as a component of a composite endpoint alongside renal failure.</p>
-<p><strong>Target parameter:</strong> <span class="math inline">\(\psi^{COMP} = E[Y_{comp}^{a=1}(180)] - E[Y_{comp}^{a=0}(180)]\)</span>, where <span class="math inline">\(Y_{comp}^a(t) = 1\)</span> if renal failure or switching occurs by time <span class="math inline">\(t\)</span> under regime <span class="math inline">\(a\)</span>.</p>
-<p>This strategy avoids the need to model switching, since it is no longer an intercurrent event but part of the outcome. The trade-off is interpretability: the composite conflates treatment tolerability (switching due to toxicity) with the safety outcome (renal failure).</p>
-</section>
-<section id="estimand-5-principal-stratum" class="level3">
-<h3 class="anchored" data-anchor-id="estimand-5-principal-stratum">Estimand 5: Principal Stratum</h3>
-<p><strong>Question:</strong> What is the risk of renal failure by 180 days among patients who <em>would not switch</em> under either treatment assignment?</p>
-<p><strong>Intercurrent event strategy:</strong> Restrict to the principal stratum of “never-switchers”—patients who would remain on treatment regardless of which drug they received.</p>
-<p><strong>Target parameter:</strong> <span class="math inline">\(\psi^{PS} = E[Y^{a=1}(180) \mid S^{a=1} = 0, S^{a=0} = 0] - E[Y^{a=0}(180) \mid S^{a=1} = 0, S^{a=0} = 0]\)</span>, where <span class="math inline">\(S^a\)</span> indicates switching under regime <span class="math inline">\(a\)</span>.</p>
-<p>The principal stratum is defined by joint potential outcomes for switching and is not directly observable. Identification requires strong assumptions (e.g., monotonicity: if a patient would not switch on the active drug, they would not switch on the comparator). In the simulation, we can identify the true never-switcher stratum because we control the DGP.</p>
-</section>
-<section id="summary" class="level3">
-<h3 class="anchored" data-anchor-id="summary">Summary</h3>
+<section id="five-estimand-strategies" class="level2">
+<h2 class="anchored" data-anchor-id="five-estimand-strategies">Five Estimand Strategies</h2>
+<p>The ICH E9(R1) addendum defines five strategies for handling intercurrent events. In a safety study where treatment switching is the primary intercurrent event, each strategy answers a different clinical question.</p>
+<p><strong>Treatment-policy.</strong> What is the 180-day risk of renal failure comparing populations <em>initiated</em> on the active versus the comparator regimen, regardless of subsequent switching? The target parameter is <span class="math inline">\(\psi^{TP} = E[Y^{a=1}(180)] - E[Y^{a=0}(180)]\)</span>, where switching occurs naturally and is not intervened upon.</p>
+<p><strong>Hypothetical no-switch.</strong> What <em>would</em> the 180-day risk be if no patients switched? The target is <span class="math inline">\(\psi^{HYP} = E[Y^{a=1, \text{no switch}}(180)] - E[Y^{a=0, \text{no switch}}(180)]\)</span>. Identification requires modelling the time-varying confounders that drive both switching and the outcome.</p>
+<p><strong>While-on-treatment.</strong> What is the risk while patients remain on their assigned treatment? Follow-up is censored at switching, and the target conditions on not switching by 180 days. Naive estimation censors at switch time and assumes non-informative censoring; IPCW or LMTP can relax this assumption.</p>
+<p><strong>Composite.</strong> What is the risk of renal failure <em>or</em> switching (whichever comes first)? Switching is absorbed into the outcome, avoiding the need to model the switching mechanism. The trade-off is that the composite conflates tolerability with safety.</p>
+<p><strong>Principal stratum.</strong> What is the risk among patients who would not switch under either treatment? The target population is the latent “never-switcher” stratum, identified through joint potential switching indicators. Identification requires monotonicity or similar structural assumptions.</p>
 <table class="caption-top table">
 <colgroup>
 <col style="width: 25%">
@@ -364,36 +312,36 @@ Figure&nbsp;1: Causal structure: baseline confounders (W) affect treatment, swit
 <th>Strategy</th>
 <th>Handling</th>
 <th>Key assumption</th>
-<th>Primary trade-off</th>
+<th>Trade-off</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td><strong>Treatment-policy</strong></td>
+<td>Treatment-policy</td>
 <td>Ignore switching</td>
 <td>None for switching</td>
 <td>Includes post-switch outcomes</td>
 </tr>
 <tr class="even">
-<td><strong>Hypothetical</strong></td>
+<td>Hypothetical</td>
 <td>Model world without switching</td>
 <td>Correct switching model</td>
-<td>Requires modelling the switching mechanism</td>
+<td>Requires modelling switching mechanism</td>
 </tr>
 <tr class="odd">
-<td><strong>While-on-treatment</strong></td>
+<td>While-on-treatment</td>
 <td>Censor at switch</td>
 <td>Non-informative censoring (or IPCW)</td>
 <td>Bias if switching is informative</td>
 </tr>
 <tr class="even">
-<td><strong>Composite</strong></td>
+<td>Composite</td>
 <td>Include switching in outcome</td>
 <td>None for switching</td>
 <td>Conflates switching and renal failure</td>
 </tr>
 <tr class="odd">
-<td><strong>Principal stratum</strong></td>
+<td>Principal stratum</td>
 <td>Restrict to never-switchers</td>
 <td>Monotonicity</td>
 <td>Targets a latent subpopulation</td>
@@ -401,57 +349,46 @@ Figure&nbsp;1: Causal structure: baseline confounders (W) affect treatment, swit
 </tbody>
 </table>
 </section>
-</section>
 <section id="estimand-estimator-alignment" class="level2">
 <h2 class="anchored" data-anchor-id="estimand-estimator-alignment">Estimand-Estimator Alignment</h2>
-<p>The table below is the conceptual core of this chapter. For each estimand, it lists the aligned LMTP estimator and the misaligned Cox estimators, together with the reason for misalignment.</p>
+<p>For each estimand, multiple estimators are available—but not all of them estimate the quantity defined by the estimand. The table below summarises the correspondence.</p>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb5"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>alignment_tbl <span class="ot">&lt;-</span> tibble<span class="sc">::</span><span class="fu">tribble</span>(</span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="sc">~</span>Estimand, <span class="sc">~</span>Estimator, <span class="sc">~</span>Aligned, <span class="sc">~</span><span class="st">`</span><span class="at">Reason for misalignment</span><span class="st">`</span>,</span>
 <span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Treatment-policy"</span>, <span class="st">"LMTP SDR (static on/off)"</span>, <span class="st">"Yes"</span>,</span>
 <span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Targets marginal risk under baseline initiation; adjusts for censoring"</span>,</span>
 <span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Treatment-policy"</span>, <span class="st">"Cox naive (ignore switch)"</span>, <span class="st">"No"</span>,</span>
-<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Targets conditional HR, not marginal RD; risk set altered by informative switching"</span>,</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Conditional HR, not marginal RD; risk set altered by informative switching"</span>,</span>
 <span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Treatment-policy"</span>, <span class="st">"Cox censor-at-switch"</span>, <span class="st">"No"</span>,</span>
-<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Censoring at switch removes high-risk subjects; wrong estimand entirely"</span>,</span>
-<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Treatment-policy"</span>, <span class="st">"Cox time-dependent trt"</span>, <span class="st">"No"</span>,</span>
-<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Conditional HR with time-varying exposure; does not target marginal risk"</span>,</span>
-<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Hypothetical no-switch"</span>, <span class="st">"LMTP SDR (no-switch intervention)"</span>, <span class="st">"Yes"</span>,</span>
-<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Targets marginal risk in a world without switching; adjusts for confounding"</span>,</span>
-<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Hypothetical no-switch"</span>, <span class="st">"Cox naive (ignore switch)"</span>, <span class="st">"No"</span>,</span>
-<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Includes post-switch outcomes; does not model the hypothetical world"</span>,</span>
-<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Hypothetical no-switch"</span>, <span class="st">"Cox censor-at-switch"</span>, <span class="st">"No"</span>,</span>
-<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Assumes non-informative censoring; biased when switching is informative"</span>,</span>
-<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>  <span class="st">"While-on-treatment"</span>, <span class="st">"LMTP SDR (censor model for switch)"</span>, <span class="st">"Yes"</span>,</span>
-<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Targets marginal risk while on treatment; upweights patients who stay despite high switch propensity"</span>,</span>
-<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a>  <span class="st">"While-on-treatment"</span>, <span class="st">"Cox censor-at-switch"</span>, <span class="st">"No"</span>,</span>
-<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Assumes non-informative censoring; biased when high-risk patients preferentially switch"</span>,</span>
-<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a>  <span class="st">"While-on-treatment"</span>, <span class="st">"Cox naive (ignore switch)"</span>, <span class="st">"No"</span>,</span>
-<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Includes post-switch person-time; does not restrict to on-treatment experience"</span>,</span>
-<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Composite"</span>, <span class="st">"LMTP SDR (composite outcome)"</span>, <span class="st">"Yes"</span>,</span>
-<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Targets marginal risk of composite (renal failure or switch); no switching model needed"</span>,</span>
-<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Composite"</span>, <span class="st">"Cox naive (composite outcome)"</span>, <span class="st">"Partial"</span>,</span>
-<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a>    <span class="st">"HR for composite endpoint; conditional not marginal, but switching is not an ICE"</span>,</span>
-<span id="cb5-27"><a href="#cb5-27" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Principal stratum"</span>, <span class="st">"LMTP SDR (restricted to never-switchers)"</span>, <span class="st">"Approximate"</span>,</span>
-<span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Requires identifying the latent never-switcher stratum; strong assumptions"</span>,</span>
-<span id="cb5-29"><a href="#cb5-29" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Principal stratum"</span>, <span class="st">"Cox naive (subset analysis)"</span>, <span class="st">"No"</span>,</span>
-<span id="cb5-30"><a href="#cb5-30" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Observed non-switchers are not the same as the principal stratum"</span></span>
-<span id="cb5-31"><a href="#cb5-31" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb5-32"><a href="#cb5-32" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb5-33"><a href="#cb5-33" aria-hidden="true" tabindex="-1"></a><span class="fu">kable</span>(alignment_tbl, <span class="at">format =</span> <span class="st">"pipe"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Removes high-risk subjects at switch; addresses a different estimand"</span>,</span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Hypothetical no-switch"</span>, <span class="st">"LMTP SDR (no-switch intervention)"</span>, <span class="st">"Yes"</span>,</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Targets marginal risk without switching; adjusts for confounding"</span>,</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Hypothetical no-switch"</span>, <span class="st">"Cox censor-at-switch"</span>, <span class="st">"No"</span>,</span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Assumes non-informative censoring; biased when switching is informative"</span>,</span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>  <span class="st">"While-on-treatment"</span>, <span class="st">"LMTP SDR (censor model for switch)"</span>, <span class="st">"Yes"</span>,</span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Upweights patients who remain on treatment despite high switch propensity"</span>,</span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a>  <span class="st">"While-on-treatment"</span>, <span class="st">"Cox censor-at-switch"</span>, <span class="st">"No"</span>,</span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Non-informative censoring assumption violated"</span>,</span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Composite"</span>, <span class="st">"Cox (composite outcome)"</span>, <span class="st">"Partial"</span>,</span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>    <span class="st">"HR for composite; conditional, not marginal"</span>,</span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a>  <span class="st">"Principal stratum"</span>, <span class="st">"LMTP SDR (non-switchers)"</span>, <span class="st">"Approximate"</span>,</span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Observed non-switchers are not the true principal stratum"</span></span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a><span class="fu">kable</span>(alignment_tbl, <span class="at">format =</span> <span class="st">"pipe"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div id="tbl-alignment" class="cell quarto-float quarto-figure quarto-figure-center anchored" data-layout-align="center">
 <figure class="quarto-float quarto-float-tbl figure">
 <figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-alignment-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Table&nbsp;1: Estimand versus estimator: aligned and misaligned approaches
+Table&nbsp;1: Estimand versus estimator alignment
 </figcaption>
 <div aria-describedby="tbl-alignment-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 <div class="cell-output-display">
 <table class="do-not-create-environment cell caption-top table table-sm table-striped small">
 <colgroup>
-<col style="width: 12%">
-<col style="width: 23%">
-<col style="width: 6%">
-<col style="width: 57%">
+<col style="width: 15%">
+<col style="width: 24%">
+<col style="width: 8%">
+<col style="width: 51%">
 </colgroup>
 <thead>
 <tr class="header">
@@ -472,31 +409,19 @@ Table&nbsp;1: Estimand versus estimator: aligned and misaligned approaches
 <td style="text-align: left;">Treatment-policy</td>
 <td style="text-align: left;">Cox naive (ignore switch)</td>
 <td style="text-align: left;">No</td>
-<td style="text-align: left;">Targets conditional HR, not marginal RD; risk set altered by informative switching</td>
+<td style="text-align: left;">Conditional HR, not marginal RD; risk set altered by informative switching</td>
 </tr>
 <tr class="odd">
 <td style="text-align: left;">Treatment-policy</td>
 <td style="text-align: left;">Cox censor-at-switch</td>
 <td style="text-align: left;">No</td>
-<td style="text-align: left;">Censoring at switch removes high-risk subjects; wrong estimand entirely</td>
+<td style="text-align: left;">Removes high-risk subjects at switch; addresses a different estimand</td>
 </tr>
 <tr class="even">
-<td style="text-align: left;">Treatment-policy</td>
-<td style="text-align: left;">Cox time-dependent trt</td>
-<td style="text-align: left;">No</td>
-<td style="text-align: left;">Conditional HR with time-varying exposure; does not target marginal risk</td>
-</tr>
-<tr class="odd">
 <td style="text-align: left;">Hypothetical no-switch</td>
 <td style="text-align: left;">LMTP SDR (no-switch intervention)</td>
 <td style="text-align: left;">Yes</td>
-<td style="text-align: left;">Targets marginal risk in a world without switching; adjusts for confounding</td>
-</tr>
-<tr class="even">
-<td style="text-align: left;">Hypothetical no-switch</td>
-<td style="text-align: left;">Cox naive (ignore switch)</td>
-<td style="text-align: left;">No</td>
-<td style="text-align: left;">Includes post-switch outcomes; does not model the hypothetical world</td>
+<td style="text-align: left;">Targets marginal risk without switching; adjusts for confounding</td>
 </tr>
 <tr class="odd">
 <td style="text-align: left;">Hypothetical no-switch</td>
@@ -508,43 +433,25 @@ Table&nbsp;1: Estimand versus estimator: aligned and misaligned approaches
 <td style="text-align: left;">While-on-treatment</td>
 <td style="text-align: left;">LMTP SDR (censor model for switch)</td>
 <td style="text-align: left;">Yes</td>
-<td style="text-align: left;">Targets marginal risk while on treatment; upweights patients who stay despite high switch propensity</td>
+<td style="text-align: left;">Upweights patients who remain on treatment despite high switch propensity</td>
 </tr>
 <tr class="odd">
 <td style="text-align: left;">While-on-treatment</td>
 <td style="text-align: left;">Cox censor-at-switch</td>
 <td style="text-align: left;">No</td>
-<td style="text-align: left;">Assumes non-informative censoring; biased when high-risk patients preferentially switch</td>
-</tr>
-<tr class="even">
-<td style="text-align: left;">While-on-treatment</td>
-<td style="text-align: left;">Cox naive (ignore switch)</td>
-<td style="text-align: left;">No</td>
-<td style="text-align: left;">Includes post-switch person-time; does not restrict to on-treatment experience</td>
-</tr>
-<tr class="odd">
-<td style="text-align: left;">Composite</td>
-<td style="text-align: left;">LMTP SDR (composite outcome)</td>
-<td style="text-align: left;">Yes</td>
-<td style="text-align: left;">Targets marginal risk of composite (renal failure or switch); no switching model needed</td>
+<td style="text-align: left;">Non-informative censoring assumption violated</td>
 </tr>
 <tr class="even">
 <td style="text-align: left;">Composite</td>
-<td style="text-align: left;">Cox naive (composite outcome)</td>
+<td style="text-align: left;">Cox (composite outcome)</td>
 <td style="text-align: left;">Partial</td>
-<td style="text-align: left;">HR for composite endpoint; conditional not marginal, but switching is not an ICE</td>
+<td style="text-align: left;">HR for composite; conditional, not marginal</td>
 </tr>
 <tr class="odd">
 <td style="text-align: left;">Principal stratum</td>
-<td style="text-align: left;">LMTP SDR (restricted to never-switchers)</td>
+<td style="text-align: left;">LMTP SDR (non-switchers)</td>
 <td style="text-align: left;">Approximate</td>
-<td style="text-align: left;">Requires identifying the latent never-switcher stratum; strong assumptions</td>
-</tr>
-<tr class="even">
-<td style="text-align: left;">Principal stratum</td>
-<td style="text-align: left;">Cox naive (subset analysis)</td>
-<td style="text-align: left;">No</td>
-<td style="text-align: left;">Observed non-switchers are not the same as the principal stratum</td>
+<td style="text-align: left;">Observed non-switchers are not the true principal stratum</td>
 </tr>
 </tbody>
 </table>
@@ -553,235 +460,210 @@ Table&nbsp;1: Estimand versus estimator: aligned and misaligned approaches
 </figure>
 </div>
 </div>
-<p>A brief conceptual explanation: when switching is informative (driven by CKD and treatment), censoring at switch removes the highest-risk person-time from the active treatment arm. This makes the active treatment appear safer than it is. The naive Cox model, by contrast, includes post-switch outcomes that may reflect the comparator treatment rather than the active one. Neither targets the marginal risk contrast that defines the estimand. LMTP avoids these problems by directly targeting the counterfactual risk under a specified intervention and adjusting for confounding and censoring through its doubly robust longitudinal estimation.</p>
+<p>When switching is informative, censoring at switch removes the highest-risk person-time from the active arm, attenuating the apparent treatment effect. The naive Cox model includes post-switch outcomes that may reflect the comparator rather than the active treatment. Neither approach targets the marginal risk contrast defined by the estimand. The LMTP sequentially doubly robust estimator addresses this by modelling the joint distribution of treatment, censoring, and outcome over time and integrating over confounders to produce marginal risk estimates.</p>
 </section>
-<section id="conventional-regression-analyses-misaligned" class="level2">
-<h2 class="anchored" data-anchor-id="conventional-regression-analyses-misaligned">Conventional Regression Analyses (Misaligned)</h2>
-<section id="a.-naive-baseline-cox-model" class="level3">
-<h3 class="anchored" data-anchor-id="a.-naive-baseline-cox-model">A. Naive Baseline Cox Model</h3>
+<section id="conventional-regression-analyses" class="level2">
+<h2 class="anchored" data-anchor-id="conventional-regression-analyses">Conventional Regression Analyses</h2>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>tau <span class="ot">&lt;-</span> <span class="dv">180</span></span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>cox_naive <span class="ot">&lt;-</span> <span class="fu">fit_cox_naive</span>(dat, <span class="at">tau =</span> tau,</span>
-<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>                           <span class="at">covars =</span> <span class="fu">c</span>(<span class="st">"age"</span>, <span class="st">"ckd"</span>, <span class="st">"cirrhosis"</span>,</span>
-<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>                                      <span class="st">"diabetes"</span>, <span class="st">"heart_failure"</span>))</span>
-<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Naive Cox HR (ignoring switch):"</span>, <span class="fu">round</span>(cox_naive<span class="sc">$</span>hr, <span class="dv">3</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Naive Cox HR (ignoring switch): 1.196</span></span>
-<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"95% CI:"</span>, <span class="fu">round</span>(cox_naive<span class="sc">$</span>ci_low, <span class="dv">3</span>), <span class="st">"-"</span>,</span>
-<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">round</span>(cox_naive<span class="sc">$</span>ci_high, <span class="dv">3</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 95% CI: 1.023 - 1.398</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>cox_naive <span class="ot">&lt;-</span> <span class="fu">fit_cox_naive</span>(dat, <span class="at">tau =</span> tau,</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>                           <span class="at">covars =</span> <span class="fu">c</span>(<span class="st">"age"</span>, <span class="st">"ckd"</span>, <span class="st">"cirrhosis"</span>,</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>                                      <span class="st">"diabetes"</span>, <span class="st">"heart_failure"</span>))</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-<p>The naive Cox model uses only baseline treatment assignment and ignores switching entirely. Under non-proportional hazards, the Cox HR is a weighted average of time-varying hazard ratios that does not correspond to any single marginal risk contrast. It targets neither the treatment-policy estimand (because it is a conditional, not marginal, parameter) nor the hypothetical estimand (because post-switch outcomes are included without adjustment).</p>
-</section>
-<section id="b.-cox-model-censoring-at-switch" class="level3">
-<h3 class="anchored" data-anchor-id="b.-cox-model-censoring-at-switch">B. Cox Model Censoring at Switch</h3>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>cox_cs <span class="ot">&lt;-</span> <span class="fu">fit_cox_censor_switch</span>(dat, <span class="at">tau =</span> tau,</span>
 <span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>                                <span class="at">covars =</span> <span class="fu">c</span>(<span class="st">"age"</span>, <span class="st">"ckd"</span>, <span class="st">"cirrhosis"</span>,</span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>                                           <span class="st">"diabetes"</span>, <span class="st">"heart_failure"</span>))</span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Cox HR (censor at switch):"</span>, <span class="fu">round</span>(cox_cs<span class="sc">$</span>hr, <span class="dv">3</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Cox HR (censor at switch): 1.179</span></span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"95% CI:"</span>, <span class="fu">round</span>(cox_cs<span class="sc">$</span>ci_low, <span class="dv">3</span>), <span class="st">"-"</span>,</span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">round</span>(cox_cs<span class="sc">$</span>ci_high, <span class="dv">3</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 95% CI: 1 - 1.39</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>                                           <span class="st">"diabetes"</span>, <span class="st">"heart_failure"</span>))</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-<p>This model censors subjects at their observed switch time. It assumes that switching is non-informative conditional on included covariates. When high-risk patients (CKD, on active treatment) preferentially switch, censoring removes the highest-risk person-time from the active arm, biasing the HR toward the null.</p>
-</section>
-<section id="c.-cox-with-time-dependent-treatment-optional" class="level3">
-<h3 class="anchored" data-anchor-id="c.-cox-with-time-dependent-treatment-optional">C. Cox with Time-Dependent Treatment (Optional)</h3>
-<!-- TODO(Joy): decide whether to include this in the main presentation -->
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>cox_td <span class="ot">&lt;-</span> <span class="fu">fit_cox_td</span>(dat, <span class="at">tau =</span> tau,</span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>                     <span class="at">covars =</span> <span class="fu">c</span>(<span class="st">"age"</span>, <span class="st">"ckd"</span>, <span class="st">"cirrhosis"</span>,</span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>                                <span class="st">"diabetes"</span>, <span class="st">"heart_failure"</span>))</span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Cox HR (time-dependent treatment):"</span>, <span class="fu">round</span>(cox_td<span class="sc">$</span>hr, <span class="dv">3</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Cox HR (time-dependent treatment): 1.155</span></span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"95% CI:"</span>, <span class="fu">round</span>(cox_td<span class="sc">$</span>ci_low, <span class="dv">3</span>), <span class="st">"-"</span>,</span>
-<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">round</span>(cox_td<span class="sc">$</span>ci_high, <span class="dv">3</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 95% CI: 0.99 - 1.347</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>                                <span class="st">"diabetes"</span>, <span class="st">"heart_failure"</span>))</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-<p>Including treatment as a time-dependent covariate models the current treatment at each time point. This is sometimes used to “adjust” for switching, but it estimates a conditional HR for current treatment—not the marginal risk contrast under a target intervention. Without strong assumptions about no unmeasured time-varying confounding, this does not target the treatment-policy estimand.</p>
-</section>
-<section id="marginal-risk-estimates-from-kaplan-meier" class="level3">
-<h3 class="anchored" data-anchor-id="marginal-risk-estimates-from-kaplan-meier">Marginal Risk Estimates from Kaplan-Meier</h3>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>km_naive <span class="ot">&lt;-</span> <span class="fu">km_risk_at</span>(cox_naive<span class="sc">$</span>survfit, <span class="at">t =</span> tau)</span>
-<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>km_cs    <span class="ot">&lt;-</span> <span class="fu">km_risk_at</span>(cox_cs<span class="sc">$</span>survfit, <span class="at">t =</span> tau)</span>
-<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"KM risk diff (naive, ignore switch):"</span>, <span class="fu">round</span>(km_naive<span class="sc">$</span>risk_diff, <span class="dv">5</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; KM risk diff (naive, ignore switch): 0.07782</span></span>
-<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"KM risk diff (censor at switch):"</span>, <span class="fu">round</span>(km_cs<span class="sc">$</span>risk_diff, <span class="dv">5</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; KM risk diff (censor at switch): 0.07044</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>km_cs    <span class="ot">&lt;-</span> <span class="fu">km_risk_at</span>(cox_cs<span class="sc">$</span>survfit, <span class="at">t =</span> tau)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-<p>These unadjusted Kaplan-Meier estimates serve only as descriptive benchmarks and do not target any specific estimand.</p>
+<div class="cell" data-layout-align="center">
+<div id="tbl-cox-results" class="cell quarto-float quarto-figure quarto-figure-center anchored" data-layout-align="center">
+<figure class="quarto-float quarto-float-tbl figure">
+<figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-cox-results-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Table&nbsp;2: Cox regression estimates from a single simulated dataset (N = 10,000)
+</figcaption>
+<div aria-describedby="tbl-cox-results-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<div class="cell-output-display">
+<table class="do-not-create-environment cell caption-top table table-sm table-striped small">
+<thead>
+<tr class="header">
+<th style="text-align: left;">Method</th>
+<th style="text-align: right;">HR</th>
+<th style="text-align: left;">HR 95% CI</th>
+<th style="text-align: right;">KM Risk Difference</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">Naive Cox (ignore switch)</td>
+<td style="text-align: right;">1.196</td>
+<td style="text-align: left;">1.023–1.398</td>
+<td style="text-align: right;">0.078</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Cox censor at switch</td>
+<td style="text-align: right;">1.179</td>
+<td style="text-align: left;">1–1.39</td>
+<td style="text-align: right;">0.070</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">Cox time-dependent treatment</td>
+<td style="text-align: right;">1.155</td>
+<td style="text-align: left;">0.99–1.347</td>
+<td style="text-align: right;">NA</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</figure>
+</div>
+</div>
+<p>The naive Cox model uses only baseline treatment and ignores switching. Under non-proportional hazards, the resulting HR is a weighted average of time-varying hazard ratios with no clear marginal interpretation. Censoring at switch assumes non-informative censoring conditional on included covariates—an assumption violated when CKD drives both switching and the outcome. The time-dependent Cox model includes current treatment as a covariate, which estimates a conditional HR for current exposure, not the marginal risk contrast under a target intervention.</p>
+<p>The unadjusted Kaplan-Meier risk differences reported above serve only as descriptive benchmarks.</p>
 <div class="callout callout-style-default callout-note callout-titled">
 <div class="callout-header d-flex align-content-center">
 <div class="callout-icon-container">
 <i class="callout-icon"></i>
 </div>
 <div class="callout-title-container flex-fill">
-Why hazard ratios are fundamentally problematic as causal estimands
+Limitations of the hazard ratio as a causal parameter
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<p>The problems with the Cox HR extend beyond non-collapsibility and non-proportional hazards. Even in a perfectly randomised trial, the population-level HR at time <span class="math inline">\(t\)</span> compares groups that are no longer balanced: if treatment is effective, high-risk individuals are depleted more rapidly from the control arm, so the treatment group eventually contains a larger fraction of high-risk subjects. This <strong>built-in selection bias</strong> means the observed HR is an attenuated version of the individual-level causal HR (Stensrud et al.&nbsp;2019). Furthermore, the causal HR—conditioning on all individual-level risk factors—requires the untestable assumption that counterfactual survival times are independent conditional on covariates; without this, the HR has no causal interpretation as a hazard ratio even when the Cox model fits perfectly (Martinussen 2022). Under non-proportional hazards, the Cox HR additionally depends on the censoring distribution, making it trial-specific and difficult to compare across studies (Rufibach 2018). Survival-function contrasts such as risk differences, risk ratios, and restricted mean survival time (RMST) differences avoid these problems and provide causally interpretable, absolute effect measures.</p>
+<p>The Cox HR is problematic as an effect measure even in randomised trials. At later time points, differential event rates deplete high-risk subjects faster in one arm, so the groups being compared are no longer exchangeable (Stensrud et al.&nbsp;2019). The individual-level causal HR requires the untestable assumption that counterfactual survival times are conditionally independent (Martinussen 2022). Under non-proportional hazards, the Cox HR additionally depends on the censoring distribution (Rufibach 2018). Survival-function contrasts—risk differences, risk ratios, and restricted mean survival time—avoid these difficulties.</p>
 </div>
 </div>
 </section>
-</section>
-<section id="aligned-estimation-with-lmtp" class="level2">
-<h2 class="anchored" data-anchor-id="aligned-estimation-with-lmtp">Aligned Estimation with LMTP</h2>
-<p>The <code>lmtp</code> package implements longitudinal modified treatment policies via the sequentially doubly robust (SDR) estimator. Unlike Cox regression, <code>lmtp</code>:</p>
-<ul>
-<li>Directly targets a marginal risk under a specified intervention (not a conditional hazard ratio)</li>
-<li>Adjusts for time-varying confounding affected by prior treatment</li>
-<li>Provides doubly robust inference: consistent if either the outcome model or the treatment/censoring model is correctly specified</li>
-<li>Returns interpretable marginal contrasts (risk differences, risk ratios)</li>
-</ul>
-<section id="preparing-data-for-lmtp" class="level3">
-<h3 class="anchored" data-anchor-id="preparing-data-for-lmtp">Preparing Data for LMTP</h3>
+<section id="estimation-with-lmtp" class="level2">
+<h2 class="anchored" data-anchor-id="estimation-with-lmtp">Estimation with LMTP</h2>
+<p>The <code>lmtp</code> package implements longitudinal modified treatment policies via the sequentially doubly robust (SDR) estimator. It targets a marginal risk under a specified intervention, adjusts for time-varying confounding, and provides doubly robust inference: the estimate is consistent if either the outcome model or the treatment/censoring model is correctly specified.</p>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>lmtp_prep <span class="ot">&lt;-</span> <span class="fu">prepare_lmtp_data</span>(</span>
 <span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  dat, <span class="at">tau =</span> tau, <span class="at">bin_width =</span> <span class="dv">14</span>,</span>
 <span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">baseline =</span> <span class="fu">c</span>(<span class="st">"age"</span>, <span class="st">"sex_male"</span>, <span class="st">"ckd"</span>, <span class="st">"diabetes"</span>, <span class="st">"hypertension"</span>,</span>
 <span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>               <span class="st">"heart_failure"</span>)</span>
-<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Wide data dimensions:"</span>, <span class="fu">dim</span>(lmtp_prep<span class="sc">$</span>data)[<span class="dv">1</span>], <span class="st">"x"</span>,</span>
-<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">dim</span>(lmtp_prep<span class="sc">$</span>data)[<span class="dv">2</span>], <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Wide data dimensions: 10000 x 34</span></span>
-<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Outcome columns:"</span>, <span class="fu">length</span>(lmtp_prep<span class="sc">$</span>Y_cols), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Outcome columns: 13</span></span>
-<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Censoring columns:"</span>, <span class="fu">length</span>(lmtp_prep<span class="sc">$</span>C_cols), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Censoring columns: 13</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-</section>
-<section id="running-lmtp-static-interventions" class="level3">
-<h3 class="anchored" data-anchor-id="running-lmtp-static-interventions">Running LMTP: Static Interventions</h3>
-<p>We estimate marginal risks under two static interventions:</p>
-<ul>
-<li><strong>Treat all with active regimen</strong> (<code>static_binary_on</code>): set <span class="math inline">\(A = 1\)</span> for everyone</li>
-<li><strong>Treat all with comparator</strong> (<code>static_binary_off</code>): set <span class="math inline">\(A = 0\)</span> for everyone</li>
-</ul>
-<p>For the treatment-policy estimand, these interventions set baseline treatment and allow switching to occur naturally. The censoring model in LMTP adjusts for the informative censoring induced by switching.</p>
+<p>We estimate marginal 180-day risks under static interventions: set <span class="math inline">\(A = 1\)</span> (active) or <span class="math inline">\(A = 0\)</span> (comparator) for all subjects. Follow-up is discretised into biweekly bins (13 time points).</p>
 <!-- TODO(Joy): finalise the intervention function for the hypothetical
      no-switch estimand in the longitudinal LMTP setup. -->
 <div class="cell" data-layout-align="center">
-<div class="sourceCode cell-code" id="cb11"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Load pre-computed LMTP results (run R/run_cached_analyses.R to generate)</span></span>
-<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>lmtp_cache <span class="ot">&lt;-</span> <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"lmtp_main.rds"</span>)</span>
-<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="fu">stopifnot</span>(<span class="st">"Run R/run_cached_analyses.R first"</span> <span class="ot">=</span> <span class="fu">file.exists</span>(lmtp_cache))</span>
-<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>lmtp_res <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(lmtp_cache)</span>
-<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"LMTP risk (active):"</span>, <span class="fu">round</span>(lmtp_res<span class="sc">$</span>risk_trt, <span class="dv">5</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; LMTP risk (active):</span></span>
-<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"LMTP risk (comparator):"</span>, <span class="fu">round</span>(lmtp_res<span class="sc">$</span>risk_ctrl, <span class="dv">5</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; LMTP risk (comparator):</span></span>
-<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a>rd <span class="ot">&lt;-</span> lmtp_res<span class="sc">$</span>contrast_rd<span class="sc">$</span>estimates</span>
-<span id="cb11-12"><a href="#cb11-12" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"LMTP risk difference:"</span>, <span class="fu">round</span>(rd<span class="sc">$</span>estimate, <span class="dv">5</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb11-13"><a href="#cb11-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; LMTP risk difference: -0.01589</span></span>
-<span id="cb11-14"><a href="#cb11-14" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"LMTP RD 95% CI:"</span>, <span class="fu">round</span>(rd<span class="sc">$</span>conf.low, <span class="dv">5</span>), <span class="st">"-"</span>,</span>
-<span id="cb11-15"><a href="#cb11-15" aria-hidden="true" tabindex="-1"></a>    <span class="fu">round</span>(rd<span class="sc">$</span>conf.high, <span class="dv">5</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb11-16"><a href="#cb11-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; LMTP RD 95% CI: -0.03944 - 0.00766</span></span>
-<span id="cb11-17"><a href="#cb11-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb11-18"><a href="#cb11-18" aria-hidden="true" tabindex="-1"></a>rr <span class="ot">&lt;-</span> lmtp_res<span class="sc">$</span>contrast_rr<span class="sc">$</span>estimates</span>
-<span id="cb11-19"><a href="#cb11-19" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"LMTP risk ratio:"</span>, <span class="fu">round</span>(rr<span class="sc">$</span>estimate, <span class="dv">4</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb11-20"><a href="#cb11-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; LMTP risk ratio: 0.9816</span></span>
-<span id="cb11-21"><a href="#cb11-21" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"LMTP RR 95% CI:"</span>, <span class="fu">round</span>(rr<span class="sc">$</span>conf.low, <span class="dv">5</span>), <span class="st">"-"</span>,</span>
-<span id="cb11-22"><a href="#cb11-22" aria-hidden="true" tabindex="-1"></a>    <span class="fu">round</span>(rr<span class="sc">$</span>conf.high, <span class="dv">5</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb11-23"><a href="#cb11-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; LMTP RR 95% CI: 0.95455 - 1.00866</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb11"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>lmtp_cache <span class="ot">&lt;-</span> <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"lmtp_main.rds"</span>)</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="fu">stopifnot</span>(<span class="st">"Run R/run_cached_analyses.R first"</span> <span class="ot">=</span> <span class="fu">file.exists</span>(lmtp_cache))</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>lmtp_res <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(lmtp_cache)</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>rd <span class="ot">&lt;-</span> lmtp_res<span class="sc">$</span>contrast_rd<span class="sc">$</span>estimates</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>rr <span class="ot">&lt;-</span> lmtp_res<span class="sc">$</span>contrast_rr<span class="sc">$</span>estimates</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-<div class="callout callout-style-default callout-important callout-titled">
-<div class="callout-header d-flex align-content-center">
-<div class="callout-icon-container">
-<i class="callout-icon"></i>
+<div class="cell" data-layout-align="center">
+<div id="tbl-lmtp-results" class="cell quarto-float quarto-figure quarto-figure-center anchored" data-layout-align="center">
+<figure class="quarto-float quarto-float-tbl figure">
+<figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-lmtp-results-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Table&nbsp;3: LMTP estimates from a single simulated dataset (N = 10,000)
+</figcaption>
+<div aria-describedby="tbl-lmtp-results-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<div class="cell-output-display">
+<table class="do-not-create-environment cell caption-top table table-sm table-striped small">
+<thead>
+<tr class="header">
+<th style="text-align: left;">Quantity</th>
+<th style="text-align: right;">Estimate</th>
+<th style="text-align: left;">95% CI</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">Risk difference</td>
+<td style="text-align: right;">-0.01589</td>
+<td style="text-align: left;">-0.03944 to 0.00766</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Risk ratio</td>
+<td style="text-align: right;">0.98160</td>
+<td style="text-align: left;">0.9546 to 1.0087</td>
+</tr>
+</tbody>
+</table>
 </div>
-<div class="callout-title-container flex-fill">
-The issue is alignment, not superiority
+</div>
+</figure>
 </div>
 </div>
-<div class="callout-body-container callout-body">
-<p>The Cox HR and the LMTP risk difference are not comparable as competing answers to the same question. They target different parameters on different scales. The problem is that the Cox HR is often <em>presented</em> as if it answers the estimand question, when in fact it targets a different quantity. LMTP directly targets the marginal risk under the specified intervention, which is the parameter defined by the estimand.</p>
-</div>
-</div>
-</section>
-<section id="practical-lmtptmle-specification" class="level3">
-<h3 class="anchored" data-anchor-id="practical-lmtptmle-specification">Practical LMTP/TMLE Specification</h3>
-<p>The analysis above uses <code>SL.glm</code> with 2-fold cross-validation for speed. For production analyses, the following guidance from the targeted learning literature (Gruber et al.&nbsp;2022; Chen et al.&nbsp;2023) should be followed:</p>
-<ul>
-<li><strong>Cross-validation folds.</strong> The number of folds <span class="math inline">\(V\)</span> should be calibrated to the effective sample size <span class="math inline">\(n_{\text{eff}}\)</span>: <span class="math inline">\(V \geq 20\)</span> when <span class="math inline">\(n_{\text{eff}} &lt; 500\)</span>; <span class="math inline">\(V \geq 10\)</span> for <span class="math inline">\(500 \leq n_{\text{eff}} &lt; 5000\)</span>; <span class="math inline">\(V \geq 5\)</span> for <span class="math inline">\(5000 \leq n_{\text{eff}} &lt; 10000\)</span>; <span class="math inline">\(V \geq 2\)</span> for <span class="math inline">\(n_{\text{eff}} \geq 10000\)</span>. For binary outcomes, <span class="math inline">\(n_{\text{eff}} = \min(\sum D, 5 \sum DY, 5 \sum D(1-Y))\)</span> where <span class="math inline">\(D\)</span> indicates non-missing outcome.</li>
-<li><strong>Super Learner library.</strong> Include at minimum a parametric model (GLM), a penalised regression (glmnet/Lasso), and one flexible learner (xgboost, BART, or GAM). A richer library reduces the risk of model misspecification.</li>
-<li><strong>Double robustness.</strong> The SDR estimator used by <code>lmtp</code> is consistent if <em>either</em> the outcome model <em>or</em> the treatment/censoring model is correctly specified—not both. This is the key advantage over G-computation, which requires correct outcome model specification.</li>
-<li><strong>Plug-in property.</strong> Unlike inverse probability weighting, TMLE/SDR is a substitution estimator that respects model bounds (e.g., survival probabilities remain in <span class="math inline">\([0, 1]\)</span>), avoiding the out-of-bounds estimates that can occur with IPTW in sparse data.</li>
-</ul>
-<!-- TODO(Joy): benchmark runtime with a richer SL library (SL.glm, SL.glmnet, SL.xgboost)
-     and determine the recommended specification for the final tutorial. -->
+<p>The Cox HR and the LMTP risk difference are not comparable as competing answers to the same question—they estimate different parameters on different scales. The concern is not which number is larger, but whether the estimator produces the quantity defined by the estimand.</p>
+<section id="specification-notes" class="level3">
+<h3 class="anchored" data-anchor-id="specification-notes">Specification notes</h3>
+<p>The current analysis uses <code>SL.mean</code>, <code>SL.glm</code>, and <code>SL.bayesglm</code> with 2-fold cross-validation. For production analyses, the Super Learner library should include at minimum a parametric model, a penalised regression, and one flexible learner (Gruber et al.&nbsp;2022). The number of CV folds should be calibrated to the effective sample size. The SDR estimator respects model bounds (survival probabilities remain in <span class="math inline">\([0,1]\)</span>), an advantage over inverse-probability weighting in sparse data.</p>
+<!-- TODO(Joy): benchmark runtime with a richer SL library. -->
 </section>
 </section>
 <section id="known-truth-from-the-dgp" class="level2">
 <h2 class="anchored" data-anchor-id="known-truth-from-the-dgp">Known Truth from the DGP</h2>
-<p>Since we control the data-generating process, we can compute the true marginal risks under each estimand by generating large counterfactual datasets.</p>
-<ul>
-<li><strong>Treatment-policy truth:</strong> generate all-treated and all-control datasets with <code>policy = "treatment_policy"</code> (switching occurs but does not censor) and no dependent censoring.</li>
-<li><strong>No-switch truth:</strong> generate all-treated and all-control datasets with <code>policy = "no_switch"</code> (no switching at all) and no dependent censoring.</li>
-</ul>
+<p>Because we control the data-generating process, we can compute true marginal risks by generating large counterfactual datasets (500,000 subjects each under all-treated and all-control, with no dependent censoring).</p>
 <div class="cell" data-layout-align="center">
-<div class="sourceCode cell-code" id="cb12"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Load pre-computed ground truth (run R/run_cached_analyses.R to generate)</span></span>
-<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>truth_cache <span class="ot">&lt;-</span> <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"sim_results"</span>, <span class="st">"ground_truth.rds"</span>)</span>
-<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="fu">stopifnot</span>(<span class="st">"Run R/run_cached_analyses.R first"</span> <span class="ot">=</span> <span class="fu">file.exists</span>(truth_cache))</span>
-<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>truth_all <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(truth_cache)</span>
-<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>truth_summary <span class="ot">&lt;-</span> tibble<span class="sc">::</span><span class="fu">tibble</span>(</span>
-<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">Estimand =</span> <span class="fu">c</span>(<span class="st">"Treatment-policy"</span>, <span class="st">"Hypothetical no-switch"</span>,</span>
-<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>               <span class="st">"While-on-treatment"</span>, <span class="st">"Composite"</span>, <span class="st">"Principal stratum"</span>),</span>
-<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>  <span class="st">`</span><span class="at">Risk (active)</span><span class="st">`</span> <span class="ot">=</span> <span class="fu">c</span>(truth_all<span class="sc">$</span>treatment_policy<span class="sc">$</span>true_risk_1,</span>
-<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>                       truth_all<span class="sc">$</span>no_switch<span class="sc">$</span>true_risk_1,</span>
-<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a>                       truth_all<span class="sc">$</span>while_on_treatment<span class="sc">$</span>true_risk_1,</span>
-<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a>                       truth_all<span class="sc">$</span>composite<span class="sc">$</span>true_risk_1,</span>
-<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a>                       truth_all<span class="sc">$</span>principal_stratum<span class="sc">$</span>true_risk_1),</span>
-<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a>  <span class="st">`</span><span class="at">Risk (comparator)</span><span class="st">`</span> <span class="ot">=</span> <span class="fu">c</span>(truth_all<span class="sc">$</span>treatment_policy<span class="sc">$</span>true_risk_0,</span>
-<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a>                           truth_all<span class="sc">$</span>no_switch<span class="sc">$</span>true_risk_0,</span>
-<span id="cb12-16"><a href="#cb12-16" aria-hidden="true" tabindex="-1"></a>                           truth_all<span class="sc">$</span>while_on_treatment<span class="sc">$</span>true_risk_0,</span>
-<span id="cb12-17"><a href="#cb12-17" aria-hidden="true" tabindex="-1"></a>                           truth_all<span class="sc">$</span>composite<span class="sc">$</span>true_risk_0,</span>
-<span id="cb12-18"><a href="#cb12-18" aria-hidden="true" tabindex="-1"></a>                           truth_all<span class="sc">$</span>principal_stratum<span class="sc">$</span>true_risk_0),</span>
-<span id="cb12-19"><a href="#cb12-19" aria-hidden="true" tabindex="-1"></a>  <span class="st">`</span><span class="at">Risk Difference</span><span class="st">`</span> <span class="ot">=</span> <span class="fu">c</span>(truth_all<span class="sc">$</span>treatment_policy<span class="sc">$</span>true_rd,</span>
-<span id="cb12-20"><a href="#cb12-20" aria-hidden="true" tabindex="-1"></a>                         truth_all<span class="sc">$</span>no_switch<span class="sc">$</span>true_rd,</span>
-<span id="cb12-21"><a href="#cb12-21" aria-hidden="true" tabindex="-1"></a>                         truth_all<span class="sc">$</span>while_on_treatment<span class="sc">$</span>true_rd,</span>
-<span id="cb12-22"><a href="#cb12-22" aria-hidden="true" tabindex="-1"></a>                         truth_all<span class="sc">$</span>composite<span class="sc">$</span>true_rd,</span>
-<span id="cb12-23"><a href="#cb12-23" aria-hidden="true" tabindex="-1"></a>                         truth_all<span class="sc">$</span>principal_stratum<span class="sc">$</span>true_rd),</span>
-<span id="cb12-24"><a href="#cb12-24" aria-hidden="true" tabindex="-1"></a>  <span class="st">`</span><span class="at">Risk Ratio</span><span class="st">`</span> <span class="ot">=</span> <span class="fu">c</span>(truth_all<span class="sc">$</span>treatment_policy<span class="sc">$</span>true_rr,</span>
-<span id="cb12-25"><a href="#cb12-25" aria-hidden="true" tabindex="-1"></a>                    truth_all<span class="sc">$</span>no_switch<span class="sc">$</span>true_rr,</span>
-<span id="cb12-26"><a href="#cb12-26" aria-hidden="true" tabindex="-1"></a>                    truth_all<span class="sc">$</span>while_on_treatment<span class="sc">$</span>true_rr,</span>
-<span id="cb12-27"><a href="#cb12-27" aria-hidden="true" tabindex="-1"></a>                    truth_all<span class="sc">$</span>composite<span class="sc">$</span>true_rr,</span>
-<span id="cb12-28"><a href="#cb12-28" aria-hidden="true" tabindex="-1"></a>                    truth_all<span class="sc">$</span>principal_stratum<span class="sc">$</span>true_rr),</span>
-<span id="cb12-29"><a href="#cb12-29" aria-hidden="true" tabindex="-1"></a>  <span class="st">`</span><span class="at">True HR</span><span class="st">`</span> <span class="ot">=</span> <span class="fu">c</span>(truth_all<span class="sc">$</span>treatment_policy<span class="sc">$</span>true_hr,</span>
-<span id="cb12-30"><a href="#cb12-30" aria-hidden="true" tabindex="-1"></a>                truth_all<span class="sc">$</span>no_switch<span class="sc">$</span>true_hr,</span>
-<span id="cb12-31"><a href="#cb12-31" aria-hidden="true" tabindex="-1"></a>                truth_all<span class="sc">$</span>while_on_treatment<span class="sc">$</span>true_hr,</span>
-<span id="cb12-32"><a href="#cb12-32" aria-hidden="true" tabindex="-1"></a>                truth_all<span class="sc">$</span>composite<span class="sc">$</span>true_hr,</span>
-<span id="cb12-33"><a href="#cb12-33" aria-hidden="true" tabindex="-1"></a>                truth_all<span class="sc">$</span>principal_stratum<span class="sc">$</span>true_hr)</span>
-<span id="cb12-34"><a href="#cb12-34" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb12-35"><a href="#cb12-35" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb12-36"><a href="#cb12-36" aria-hidden="true" tabindex="-1"></a><span class="fu">kable</span>(truth_summary, <span class="at">digits =</span> <span class="dv">5</span>, <span class="at">format =</span> <span class="st">"pipe"</span>,</span>
-<span id="cb12-37"><a href="#cb12-37" aria-hidden="true" tabindex="-1"></a>      <span class="at">caption =</span> <span class="st">"True 180-day risks and hazard ratios by estimand (Monte Carlo, N = 500,000)"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb12"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>truth_cache <span class="ot">&lt;-</span> <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"sim_results"</span>, <span class="st">"ground_truth.rds"</span>)</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="fu">stopifnot</span>(<span class="st">"Run R/run_cached_analyses.R first"</span> <span class="ot">=</span> <span class="fu">file.exists</span>(truth_cache))</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>truth_all <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(truth_cache)</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>truth_summary <span class="ot">&lt;-</span> tibble<span class="sc">::</span><span class="fu">tibble</span>(</span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">Estimand =</span> <span class="fu">c</span>(<span class="st">"Treatment-policy"</span>, <span class="st">"Hypothetical no-switch"</span>,</span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>               <span class="st">"While-on-treatment"</span>, <span class="st">"Composite"</span>, <span class="st">"Principal stratum"</span>),</span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>  <span class="st">`</span><span class="at">Risk (active)</span><span class="st">`</span> <span class="ot">=</span> <span class="fu">c</span>(truth_all<span class="sc">$</span>treatment_policy<span class="sc">$</span>true_risk_1,</span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>                       truth_all<span class="sc">$</span>no_switch<span class="sc">$</span>true_risk_1,</span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>                       truth_all<span class="sc">$</span>while_on_treatment<span class="sc">$</span>true_risk_1,</span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a>                       truth_all<span class="sc">$</span>composite<span class="sc">$</span>true_risk_1,</span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a>                       truth_all<span class="sc">$</span>principal_stratum<span class="sc">$</span>true_risk_1),</span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a>  <span class="st">`</span><span class="at">Risk (comparator)</span><span class="st">`</span> <span class="ot">=</span> <span class="fu">c</span>(truth_all<span class="sc">$</span>treatment_policy<span class="sc">$</span>true_risk_0,</span>
+<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a>                           truth_all<span class="sc">$</span>no_switch<span class="sc">$</span>true_risk_0,</span>
+<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a>                           truth_all<span class="sc">$</span>while_on_treatment<span class="sc">$</span>true_risk_0,</span>
+<span id="cb12-16"><a href="#cb12-16" aria-hidden="true" tabindex="-1"></a>                           truth_all<span class="sc">$</span>composite<span class="sc">$</span>true_risk_0,</span>
+<span id="cb12-17"><a href="#cb12-17" aria-hidden="true" tabindex="-1"></a>                           truth_all<span class="sc">$</span>principal_stratum<span class="sc">$</span>true_risk_0),</span>
+<span id="cb12-18"><a href="#cb12-18" aria-hidden="true" tabindex="-1"></a>  <span class="at">RD =</span> <span class="fu">c</span>(truth_all<span class="sc">$</span>treatment_policy<span class="sc">$</span>true_rd,</span>
+<span id="cb12-19"><a href="#cb12-19" aria-hidden="true" tabindex="-1"></a>         truth_all<span class="sc">$</span>no_switch<span class="sc">$</span>true_rd,</span>
+<span id="cb12-20"><a href="#cb12-20" aria-hidden="true" tabindex="-1"></a>         truth_all<span class="sc">$</span>while_on_treatment<span class="sc">$</span>true_rd,</span>
+<span id="cb12-21"><a href="#cb12-21" aria-hidden="true" tabindex="-1"></a>         truth_all<span class="sc">$</span>composite<span class="sc">$</span>true_rd,</span>
+<span id="cb12-22"><a href="#cb12-22" aria-hidden="true" tabindex="-1"></a>         truth_all<span class="sc">$</span>principal_stratum<span class="sc">$</span>true_rd),</span>
+<span id="cb12-23"><a href="#cb12-23" aria-hidden="true" tabindex="-1"></a>  <span class="at">RR =</span> <span class="fu">c</span>(truth_all<span class="sc">$</span>treatment_policy<span class="sc">$</span>true_rr,</span>
+<span id="cb12-24"><a href="#cb12-24" aria-hidden="true" tabindex="-1"></a>         truth_all<span class="sc">$</span>no_switch<span class="sc">$</span>true_rr,</span>
+<span id="cb12-25"><a href="#cb12-25" aria-hidden="true" tabindex="-1"></a>         truth_all<span class="sc">$</span>while_on_treatment<span class="sc">$</span>true_rr,</span>
+<span id="cb12-26"><a href="#cb12-26" aria-hidden="true" tabindex="-1"></a>         truth_all<span class="sc">$</span>composite<span class="sc">$</span>true_rr,</span>
+<span id="cb12-27"><a href="#cb12-27" aria-hidden="true" tabindex="-1"></a>         truth_all<span class="sc">$</span>principal_stratum<span class="sc">$</span>true_rr),</span>
+<span id="cb12-28"><a href="#cb12-28" aria-hidden="true" tabindex="-1"></a>  <span class="at">HR =</span> <span class="fu">c</span>(truth_all<span class="sc">$</span>treatment_policy<span class="sc">$</span>true_hr,</span>
+<span id="cb12-29"><a href="#cb12-29" aria-hidden="true" tabindex="-1"></a>         truth_all<span class="sc">$</span>no_switch<span class="sc">$</span>true_hr,</span>
+<span id="cb12-30"><a href="#cb12-30" aria-hidden="true" tabindex="-1"></a>         truth_all<span class="sc">$</span>while_on_treatment<span class="sc">$</span>true_hr,</span>
+<span id="cb12-31"><a href="#cb12-31" aria-hidden="true" tabindex="-1"></a>         truth_all<span class="sc">$</span>composite<span class="sc">$</span>true_hr,</span>
+<span id="cb12-32"><a href="#cb12-32" aria-hidden="true" tabindex="-1"></a>         truth_all<span class="sc">$</span>principal_stratum<span class="sc">$</span>true_hr)</span>
+<span id="cb12-33"><a href="#cb12-33" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb12-34"><a href="#cb12-34" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-35"><a href="#cb12-35" aria-hidden="true" tabindex="-1"></a><span class="fu">kable</span>(truth_summary, <span class="at">digits =</span> <span class="dv">5</span>, <span class="at">format =</span> <span class="st">"pipe"</span>,</span>
+<span id="cb12-36"><a href="#cb12-36" aria-hidden="true" tabindex="-1"></a>      <span class="at">caption =</span> <span class="st">"True 180-day risks by estimand (N = 500,000 per arm)"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output-display">
 <table class="caption-top table table-sm table-striped small">
-<caption>True 180-day risks and hazard ratios by estimand (Monte Carlo, N = 500,000)</caption>
+<caption>True 180-day risks by estimand (N = 500,000 per arm)</caption>
 <colgroup>
-<col style="width: 25%">
-<col style="width: 15%">
-<col style="width: 20%">
+<col style="width: 28%">
 <col style="width: 17%">
-<col style="width: 12%">
-<col style="width: 8%">
+<col style="width: 22%">
+<col style="width: 11%">
+<col style="width: 10%">
+<col style="width: 10%">
 </colgroup>
 <thead>
 <tr class="header">
 <th style="text-align: left;">Estimand</th>
 <th style="text-align: right;">Risk (active)</th>
 <th style="text-align: right;">Risk (comparator)</th>
-<th style="text-align: right;">Risk Difference</th>
-<th style="text-align: right;">Risk Ratio</th>
-<th style="text-align: right;">True HR</th>
+<th style="text-align: right;">RD</th>
+<th style="text-align: right;">RR</th>
+<th style="text-align: right;">HR</th>
 </tr>
 </thead>
 <tbody>
@@ -829,37 +711,19 @@ The issue is alignment, not superiority
 </table>
 </div>
 </div>
-<section id="what-drives-the-differences-across-estimands" class="level3">
-<h3 class="anchored" data-anchor-id="what-drives-the-differences-across-estimands">What Drives the Differences Across Estimands</h3>
-<p>The table above demonstrates a fundamental point: <strong>the treatment effect has no single value without specifying the estimand</strong>. The risk difference ranges from near zero to over 14 percentage points depending on how treatment switching is handled. This is not a statistical artifact—it reflects genuinely different causal questions about the same drug.</p>
-<p><strong>Treatment-policy (RD &gt; 0, moderate).</strong> Under this estimand, the active drug increases risk because patients are followed regardless of switching. During the early period (before day 45 in the DGP), the active drug has HR = 1.25, causing excess harm. Some patients switch to the comparator, which reduces their subsequent hazard, but the early harm has already occurred. The treatment-policy RD captures the net real-world consequence of initiating the active drug: early harm partially offset by switching.</p>
-<p><strong>Hypothetical no-switch (RD <span class="math inline">\(\approx\)</span> 0).</strong> In a world where nobody switches, the early harm from the active drug (HR = 1.25 before day 45) is approximately offset by the late protective effect (HR = 0.70 after day 45). Over 180 days, these roughly cancel out. This estimand isolates the direct pharmacological effect of sustained treatment and is near null because the non-proportional hazard structure produces a time-averaged effect close to zero.</p>
-<p><strong>While-on-treatment (RD <span class="math inline">\(\approx\)</span> 0).</strong> The while-on-treatment truth equals the no-switch truth because, under counterfactual all-treated or all-control conditions, nobody switches (everyone is on the same drug). In observed data, however, the while-on-treatment estimand differs from the hypothetical because it conditions on not switching rather than intervening to prevent it—a distinction that matters when switching is informative.</p>
-<p><strong>Composite (RD &gt;&gt; 0, largest).</strong> The composite estimand absorbs switching into the outcome. Because the active drug causes more switching (driven by <code>gamma_A = 0.80</code>), the composite event rate is substantially higher in the active arm. This large risk difference is driven primarily by differential switching rates, not by differential renal failure rates. The composite estimand conflates drug tolerability with drug safety—a clinically important distinction that is lost when switching is treated as part of the outcome.</p>
-<p><strong>Principal stratum (RD <span class="math inline">\(\approx\)</span> 0, smallest).</strong> Among never-switchers—the approximately 19% of patients who would not switch under either treatment—the risk difference is near zero. Never-switchers tend to be lower-risk patients (without CKD) for whom the drug’s effect is minimal. This estimand targets a highly selected, latent subpopulation that may not be representative of the patients clinicians are most concerned about.</p>
-<div class="callout callout-style-default callout-note callout-titled">
-<div class="callout-header d-flex align-content-center">
-<div class="callout-icon-container">
-<i class="callout-icon"></i>
-</div>
-<div class="callout-title-container flex-fill">
-The same drug, five different answers
-</div>
-</div>
-<div class="callout-body-container callout-body">
-<p>The active drug is genuinely riskier in the short term (HR = 1.25 early) and genuinely protective in the longer term (HR = 0.70 late). Whether the overall effect appears harmful, null, or protective depends entirely on which estimand is chosen—and each estimand answers a different clinical question. This is not a flaw of the framework; it is the framework working as intended. The flaw arises when analysts report a treatment effect without specifying which estimand they are targeting.</p>
-</div>
-</div>
+<section id="why-the-estimands-differ" class="level3">
+<h3 class="anchored" data-anchor-id="why-the-estimands-differ">Why the estimands differ</h3>
+<p>The risk difference ranges from near zero to over 14 percentage points across the five strategies. This variation reflects genuinely different causal questions about the same drug, not a statistical artifact.</p>
+<p>Under the treatment-policy strategy, the active drug increases risk (RD &gt; 0) because patients are followed regardless of switching. During the early period (HR = 1.25 before day 45), the active drug causes excess harm. Some patients subsequently switch to the comparator, reducing their later hazard, but the early harm has already accumulated.</p>
+<p>Under the hypothetical no-switch strategy, the risk difference is approximately zero. Without switching, the early harm (HR = 1.25) is offset by the late protective effect (HR = 0.70) over the full 180-day window. The while-on-treatment truth is numerically identical because, under counterfactual all-treated or all-control conditions, nobody switches.</p>
+<p>The composite estimand produces the largest risk difference because the active drug causes substantially more switching. The composite event rate in the active arm is driven primarily by differential switching rates, not differential renal failure.</p>
+<p>Among the approximately 19% of patients who constitute the principal stratum (never-switchers under either treatment), the risk difference is near zero. These patients tend to be lower-risk (without CKD), for whom the treatment effect is small.</p>
 </section>
 </section>
 <section id="sec-support" class="level2">
 <h2 class="anchored" data-anchor-id="sec-support">Data Support Diagnostics</h2>
-<p>Identification of a causal estimand may be conceptually justified, but estimation can fail in practice if the data do not provide adequate empirical support for the target intervention. This section introduces diagnostics for assessing data support and demonstrates how estimation degrades as support weakens.</p>
-<p><strong>Positivity</strong> requires that, within every stratum defined by measured confounders, there is a nonzero probability of receiving each treatment. In longitudinal settings (as with LMTP), sequential positivity requires that the cumulative product of conditional treatment and censoring probabilities remains bounded away from zero at every time point. When this product approaches zero in some strata, the corresponding inverse-probability weights become extreme and estimators become unstable.</p>
-<p>Rather than using fixed thresholds (e.g., flagging propensity scores below 0.05 or above 0.95), a data-adaptive approach sets the positivity bound as <span class="math inline">\(5 / (\sqrt{n} \cdot \log n)\)</span>, where <span class="math inline">\(n\)</span> is the sample size (Gruber et al.&nbsp;2022). For <span class="math inline">\(n = 2000\)</span>, this gives bounds of approximately <span class="math inline">\((0.025, 0.975)\)</span>; for <span class="math inline">\(n = 500\)</span>, approximately <span class="math inline">\((0.036, 0.964)\)</span>. The <code>compute_ps_diagnostics()</code> function in our support diagnostics reports both conventional and adaptive thresholds.</p>
-<section id="three-support-scenarios" class="level3">
-<h3 class="anchored" data-anchor-id="three-support-scenarios">Three Support Scenarios</h3>
-<p>We create three versions of the DGP by modifying parameters that control switching intensity and confounding.</p>
+<p>Even when a causal estimand is well-defined and identifiable in principle, estimation can fail if the data lack empirical support. Positivity requires that, within every stratum of measured confounders, there is a nonzero probability of receiving each treatment and of not being censored. In longitudinal settings, sequential positivity requires that the cumulative product of treatment and censoring probabilities remains bounded away from zero across all time points (Gruber et al.&nbsp;2022).</p>
+<p>We examine three scenarios that vary switching intensity while holding the treatment assignment mechanism fixed.</p>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb13"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">101</span>)</span>
 <span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>dat_good <span class="ot">&lt;-</span> <span class="fu">generate_hep_data</span>(</span>
@@ -883,10 +747,7 @@ The same drug, five different answers
 <span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a>  <span class="at">seed =</span> <span class="dv">103</span></span>
 <span id="cb13-21"><a href="#cb13-21" aria-hidden="true" tabindex="-1"></a>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-</section>
-<section id="switching-probability-diagnostics" class="level3">
-<h3 class="anchored" data-anchor-id="switching-probability-diagnostics">Switching Probability Diagnostics</h3>
-<p>The three scenarios differ in switching parameters, not in treatment assignment. The relevant diagnostic is therefore the distribution of <strong>predicted switching probabilities</strong>, not treatment propensity scores (which are identical across scenarios because the treatment assignment model does not change).</p>
+<p>Because treatment assignment parameters are held constant, treatment propensity scores are identical across scenarios. The relevant diagnostic is the distribution of predicted switching probabilities.</p>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb14"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>scenario_list <span class="ot">&lt;-</span> <span class="fu">list</span>(</span>
 <span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="st">"1. Good support"</span> <span class="ot">=</span> dat_good,</span>
@@ -895,16 +756,35 @@ The same drug, five different answers
 <span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>)</span>
 <span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>support_plots <span class="ot">&lt;-</span> <span class="fu">plot_support_scenarios</span>(scenario_list)</span>
-<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>support_plots<span class="sc">$</span>by_treatment</span>
-<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; NULL</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>support_plots<span class="sc">$</span>by_treatment</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div id="fig-support-switch" class="quarto-float quarto-figure quarto-figure-center anchored" data-fig-align="center">
+<figure class="quarto-float quarto-float-fig figure">
+<div aria-describedby="fig-support-switch-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<img src="draft-estimands-results-outline_files/figure-html/fig-support-switch-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="672">
+</div>
+<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-support-switch-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Figure&nbsp;2: Predicted switching probability by treatment arm across three scenarios.
+</figcaption>
+</figure>
+</div>
+</div>
 </div>
 <div class="cell" data-layout-align="center">
-<div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>support_plots<span class="sc">$</span>by_ckd</span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; NULL</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>support_plots<span class="sc">$</span>by_ckd</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div id="fig-support-ckd" class="quarto-float quarto-figure quarto-figure-center anchored" data-fig-align="center">
+<figure class="quarto-float quarto-float-fig figure">
+<div aria-describedby="fig-support-ckd-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<img src="draft-estimands-results-outline_files/figure-html/fig-support-ckd-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="672">
 </div>
-</section>
-<section id="support-summary-table" class="level3">
-<h3 class="anchored" data-anchor-id="support-summary-table">Support Summary Table</h3>
+<figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-support-ckd-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Figure&nbsp;3: Switching probability by CKD status across scenarios.
+</figcaption>
+</figure>
+</div>
+</div>
+</div>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb16"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>support_tbl <span class="ot">&lt;-</span> <span class="fu">bind_rows</span>(</span>
 <span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarize_support</span>(dat_good, <span class="st">"Good support"</span>),</span>
@@ -916,7 +796,7 @@ The same drug, five different answers
 <div id="tbl-support" class="cell quarto-float quarto-figure quarto-figure-center anchored" data-layout-align="center">
 <figure class="quarto-float quarto-float-tbl figure">
 <figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-support-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Table&nbsp;2: Support diagnostic summary across scenarios
+Table&nbsp;4: Support diagnostic summary
 </figcaption>
 <div aria-describedby="tbl-support-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 <div class="cell-output-display">
@@ -991,18 +871,16 @@ Table&nbsp;2: Support diagnostic summary across scenarios
 </figure>
 </div>
 </div>
-</section>
-<section id="how-estimation-degrades-with-weak-support" class="level3">
-<h3 class="anchored" data-anchor-id="how-estimation-degrades-with-weak-support">How Estimation Degrades with Weak Support</h3>
 <div class="cell" data-layout-align="center">
-<div class="sourceCode cell-code" id="cb17"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Load pre-computed support results (run R/run_cached_analyses.R to generate)</span></span>
-<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>support_cache <span class="ot">&lt;-</span> <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"support_estimation.rds"</span>)</span>
-<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="fu">stopifnot</span>(<span class="st">"Run R/run_cached_analyses.R first"</span> <span class="ot">=</span> <span class="fu">file.exists</span>(support_cache))</span>
-<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>support_results <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(support_cache)</span>
-<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a><span class="fu">kable</span>(support_results, <span class="at">digits =</span> <span class="dv">4</span>, <span class="at">format =</span> <span class="st">"pipe"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb17"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>support_cache <span class="ot">&lt;-</span> <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"support_estimation.rds"</span>)</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="fu">stopifnot</span>(<span class="st">"Run R/run_cached_analyses.R first"</span> <span class="ot">=</span> <span class="fu">file.exists</span>(support_cache))</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>support_results <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(support_cache)</span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="fu">kable</span>(support_results, <span class="at">digits =</span> <span class="dv">4</span>, <span class="at">format =</span> <span class="st">"pipe"</span>,</span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>      <span class="at">caption =</span> <span class="st">"Estimation results across support scenarios"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output-display">
 <table class="caption-top table table-sm table-striped small">
+<caption>Estimation results across support scenarios</caption>
 <thead>
 <tr class="header">
 <th style="text-align: left;">Scenario</th>
@@ -1034,43 +912,32 @@ Table&nbsp;2: Support diagnostic summary across scenarios
 </table>
 </div>
 </div>
-<p>Under good support (12% switching), all methods produce estimates. As support degrades:</p>
-<ul>
-<li>The switching probability distribution shifts dramatically: under poor support, ~67% of patients switch and CKD patients switch near-deterministically</li>
-<li>Cox censor-at-switch HR diverges from naive (2.27 vs 1.39 under poor support) because censoring at switch removes a large, non-random fraction of the active arm</li>
-<li>LMTP estimates show increasing negative bias and wider confidence intervals as the censoring model must extrapolate further</li>
-<li>The practical lesson: identification may be conceptually valid while estimation fails due to lack of empirical support for the switching adjustment</li>
-</ul>
+<p>Under good support (~12% switching), the three estimators produce stable estimates. As switching intensifies, the censor-at-switch Cox HR diverges from the naive HR (2.27 vs 1.39 under poor support), because censoring removes a large, non-random fraction of the active arm. LMTP estimates show increasing bias and wider confidence intervals as the censoring model must extrapolate into regions with limited data.</p>
 <div class="callout callout-style-default callout-warning callout-titled">
 <div class="callout-header d-flex align-content-center">
 <div class="callout-icon-container">
 <i class="callout-icon"></i>
 </div>
 <div class="callout-title-container flex-fill">
-Identification vs.&nbsp;estimation
+Identification versus estimation
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<p>A target estimand can be well-defined and conceptually identified under the assumed causal model, but estimation can still fail if the data do not contain enough subjects who follow (or could plausibly follow) the target intervention. Always check support diagnostics before interpreting estimates.</p>
+<p>A well-defined, identifiable estimand does not guarantee reliable estimation. If few subjects in certain strata follow the target intervention, support diagnostics should be examined before interpreting any estimate.</p>
 </div>
 </div>
-</section>
 </section>
 <section id="repeated-simulation-study" class="level2">
 <h2 class="anchored" data-anchor-id="repeated-simulation-study">Repeated Simulation Study</h2>
-<p>We now assess estimator performance over repeated samples from the DGP. This reveals bias, variance, and coverage properties that a single dataset cannot show. For each estimand, we compare misaligned Cox estimators to the aligned LMTP estimator.</p>
-<!-- TODO(Joy): fill in exact runtime notes after benchmarking -->
-<!-- TODO(Joy): benchmark whether 200 iterations is feasible or reduce for development -->
+<p>We assess estimator performance over 20 repeated samples (N = 10,000 each) from the DGP, across all five estimands. For each iteration, we fit Cox naive, Cox censor-at-switch, and LMTP SDR, and compare the resulting risk differences and hazard ratios to the known truth.</p>
+<!-- TODO(Joy): increase to 200+ iterations for production. -->
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb18"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="fu">source</span>(<span class="fu">here</span>(<span class="st">"R"</span>, <span class="st">"run_simulations.R"</span>))</span>
 <span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Load pre-computed simulation results (run R/run_cached_analyses.R to generate)</span></span>
-<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>sim_cache <span class="ot">&lt;-</span> <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"sim_study_main.rds"</span>)</span>
-<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="fu">stopifnot</span>(<span class="st">"Run R/run_cached_analyses.R first"</span> <span class="ot">=</span> <span class="fu">file.exists</span>(sim_cache))</span>
-<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>sim_results <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(sim_cache)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>sim_cache <span class="ot">&lt;-</span> <span class="fu">here</span>(<span class="st">"results"</span>, <span class="st">"sim_study_main.rds"</span>)</span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a><span class="fu">stopifnot</span>(<span class="st">"Run R/run_cached_analyses.R first"</span> <span class="ot">=</span> <span class="fu">file.exists</span>(sim_cache))</span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>sim_results <span class="ot">&lt;-</span> <span class="fu">readRDS</span>(sim_cache)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
-<section id="results-by-estimand" class="level3">
-<h3 class="anchored" data-anchor-id="results-by-estimand">Results by Estimand</h3>
 <div class="cell" data-layout-align="center">
 <div class="sourceCode cell-code" id="cb19"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>estimand_labels <span class="ot">&lt;-</span> <span class="fu">c</span>(</span>
 <span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">treatment_policy   =</span> <span class="st">"Treatment-policy"</span>,</span>
@@ -1091,16 +958,19 @@ Identification vs.&nbsp;estimation
 <span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a>  s</span>
 <span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a>}) <span class="sc">%&gt;%</span> <span class="fu">bind_rows</span>()</span>
 <span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a><span class="fu">kable</span>(sim_summaries <span class="sc">%&gt;%</span></span>
-<span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a>        <span class="fu">select</span>(estimand_label, method, n_converged,</span>
-<span id="cb19-22"><a href="#cb19-22" aria-hidden="true" tabindex="-1"></a>               mean_hr, bias_hr, mean_rd, bias_rd,</span>
-<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a>               mean_rr, bias_rr, coverage_rd) <span class="sc">%&gt;%</span></span>
-<span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a>        <span class="fu">rename</span>(<span class="at">Estimand =</span> estimand_label, <span class="at">Method =</span> method),</span>
-<span id="cb19-25"><a href="#cb19-25" aria-hidden="true" tabindex="-1"></a>      <span class="at">digits =</span> <span class="dv">4</span>, <span class="at">format =</span> <span class="st">"pipe"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb19-20"><a href="#cb19-20" aria-hidden="true" tabindex="-1"></a><span class="co"># Clean table: replace NaN with NA for display</span></span>
+<span id="cb19-21"><a href="#cb19-21" aria-hidden="true" tabindex="-1"></a>sim_display <span class="ot">&lt;-</span> sim_summaries <span class="sc">%&gt;%</span></span>
+<span id="cb19-22"><a href="#cb19-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(estimand_label, method, n_converged,</span>
+<span id="cb19-23"><a href="#cb19-23" aria-hidden="true" tabindex="-1"></a>         mean_hr, bias_hr, mean_rd, bias_rd,</span>
+<span id="cb19-24"><a href="#cb19-24" aria-hidden="true" tabindex="-1"></a>         mean_rr, bias_rr, coverage_rd) <span class="sc">%&gt;%</span></span>
+<span id="cb19-25"><a href="#cb19-25" aria-hidden="true" tabindex="-1"></a>  <span class="fu">rename</span>(<span class="at">Estimand =</span> estimand_label, <span class="at">Method =</span> method) <span class="sc">%&gt;%</span></span>
+<span id="cb19-26"><a href="#cb19-26" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="fu">across</span>(<span class="fu">where</span>(is.numeric), <span class="sc">~</span> <span class="fu">ifelse</span>(<span class="fu">is.nan</span>(.), <span class="cn">NA</span>, .)))</span>
+<span id="cb19-27"><a href="#cb19-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-28"><a href="#cb19-28" aria-hidden="true" tabindex="-1"></a><span class="fu">kable</span>(sim_display, <span class="at">digits =</span> <span class="dv">4</span>, <span class="at">format =</span> <span class="st">"pipe"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div id="tbl-sim-all" class="cell quarto-float quarto-figure quarto-figure-center anchored" data-layout-align="center">
 <figure class="quarto-float quarto-float-tbl figure">
 <figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-sim-all-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Table&nbsp;3: Simulation results by estimand (20 iterations, N = 10,000)
+Table&nbsp;5: Simulation results by estimand (20 iterations, N = 10,000)
 </figcaption>
 <div aria-describedby="tbl-sim-all-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 <div class="cell-output-display">
@@ -1160,8 +1030,8 @@ Table&nbsp;3: Simulation results by estimand (20 iterations, N = 10,000)
 <td style="text-align: left;">Treatment-policy</td>
 <td style="text-align: left;">LMTP SDR</td>
 <td style="text-align: right;">20</td>
-<td style="text-align: right;">NaN</td>
-<td style="text-align: right;">NaN</td>
+<td style="text-align: right;">NA</td>
+<td style="text-align: right;">NA</td>
 <td style="text-align: right;">-0.0207</td>
 <td style="text-align: right;">-0.0275</td>
 <td style="text-align: right;">0.9762</td>
@@ -1196,8 +1066,8 @@ Table&nbsp;3: Simulation results by estimand (20 iterations, N = 10,000)
 <td style="text-align: left;">Hypothetical no-switch</td>
 <td style="text-align: left;">LMTP SDR</td>
 <td style="text-align: right;">20</td>
-<td style="text-align: right;">NaN</td>
-<td style="text-align: right;">NaN</td>
+<td style="text-align: right;">NA</td>
+<td style="text-align: right;">NA</td>
 <td style="text-align: right;">-0.0145</td>
 <td style="text-align: right;">-0.0140</td>
 <td style="text-align: right;">0.9834</td>
@@ -1232,8 +1102,8 @@ Table&nbsp;3: Simulation results by estimand (20 iterations, N = 10,000)
 <td style="text-align: left;">While-on-treatment</td>
 <td style="text-align: left;">LMTP SDR</td>
 <td style="text-align: right;">20</td>
-<td style="text-align: right;">NaN</td>
-<td style="text-align: right;">NaN</td>
+<td style="text-align: right;">NA</td>
+<td style="text-align: right;">NA</td>
 <td style="text-align: right;">-0.0147</td>
 <td style="text-align: right;">-0.0143</td>
 <td style="text-align: right;">0.9831</td>
@@ -1268,8 +1138,8 @@ Table&nbsp;3: Simulation results by estimand (20 iterations, N = 10,000)
 <td style="text-align: left;">Composite</td>
 <td style="text-align: left;">LMTP SDR</td>
 <td style="text-align: right;">20</td>
-<td style="text-align: right;">NaN</td>
-<td style="text-align: right;">NaN</td>
+<td style="text-align: right;">NA</td>
+<td style="text-align: right;">NA</td>
 <td style="text-align: right;">-0.1624</td>
 <td style="text-align: right;">-0.3094</td>
 <td style="text-align: right;">0.7707</td>
@@ -1304,8 +1174,8 @@ Table&nbsp;3: Simulation results by estimand (20 iterations, N = 10,000)
 <td style="text-align: left;">Principal stratum</td>
 <td style="text-align: left;">LMTP SDR (non-switchers)</td>
 <td style="text-align: right;">20</td>
-<td style="text-align: right;">NaN</td>
-<td style="text-align: right;">NaN</td>
+<td style="text-align: right;">NA</td>
+<td style="text-align: right;">NA</td>
 <td style="text-align: right;">-0.0261</td>
 <td style="text-align: right;">-0.0261</td>
 <td style="text-align: right;">0.9695</td>
@@ -1319,41 +1189,25 @@ Table&nbsp;3: Simulation results by estimand (20 iterations, N = 10,000)
 </figure>
 </div>
 </div>
-</section>
-<section id="performance-plot" class="level3">
-<h3 class="anchored" data-anchor-id="performance-plot">Performance Plot</h3>
 <div class="cell" data-layout-align="center">
-<div class="sourceCode cell-code" id="cb20"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>sim_plot_data <span class="ot">&lt;-</span> sim_results <span class="sc">%&gt;%</span></span>
-<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(converged) <span class="sc">%&gt;%</span></span>
-<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(</span>
-<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>    <span class="at">estimate =</span> <span class="fu">case_when</span>(</span>
-<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>      method <span class="sc">==</span> <span class="st">"LMTP SDR"</span> <span class="sc">~</span> risk_diff,</span>
-<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a>      <span class="cn">TRUE</span> <span class="sc">~</span> hr</span>
-<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a>    ),</span>
-<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a>    <span class="at">scale =</span> <span class="fu">case_when</span>(</span>
-<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a>      method <span class="sc">==</span> <span class="st">"LMTP SDR"</span> <span class="sc">~</span> <span class="st">"Risk Difference"</span>,</span>
-<span id="cb20-10"><a href="#cb20-10" aria-hidden="true" tabindex="-1"></a>      <span class="cn">TRUE</span> <span class="sc">~</span> <span class="st">"Hazard Ratio"</span></span>
-<span id="cb20-11"><a href="#cb20-11" aria-hidden="true" tabindex="-1"></a>    ),</span>
-<span id="cb20-12"><a href="#cb20-12" aria-hidden="true" tabindex="-1"></a>    <span class="at">estimand_label =</span> estimand_labels[estimand]</span>
-<span id="cb20-13"><a href="#cb20-13" aria-hidden="true" tabindex="-1"></a>  )</span>
-<span id="cb20-14"><a href="#cb20-14" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb20-15"><a href="#cb20-15" aria-hidden="true" tabindex="-1"></a>truth_lines <span class="ot">&lt;-</span> <span class="fu">tibble</span>(</span>
-<span id="cb20-16"><a href="#cb20-16" aria-hidden="true" tabindex="-1"></a>  <span class="at">estimand_label =</span> <span class="fu">unname</span>(estimand_labels[<span class="fu">names</span>(truth_all)]),</span>
-<span id="cb20-17"><a href="#cb20-17" aria-hidden="true" tabindex="-1"></a>  <span class="at">scale =</span> <span class="st">"Risk Difference"</span>,</span>
-<span id="cb20-18"><a href="#cb20-18" aria-hidden="true" tabindex="-1"></a>  <span class="at">xint =</span> <span class="fu">sapply</span>(truth_all, <span class="cf">function</span>(x) x<span class="sc">$</span>true_rd)</span>
-<span id="cb20-19"><a href="#cb20-19" aria-hidden="true" tabindex="-1"></a>)</span>
-<span id="cb20-20"><a href="#cb20-20" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb20-21"><a href="#cb20-21" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(sim_plot_data, <span class="fu">aes</span>(<span class="at">x =</span> estimate, <span class="at">fill =</span> method)) <span class="sc">+</span></span>
-<span id="cb20-22"><a href="#cb20-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="at">alpha =</span> <span class="fl">0.6</span>, <span class="at">bins =</span> <span class="dv">25</span>, <span class="at">position =</span> <span class="st">"identity"</span>) <span class="sc">+</span></span>
-<span id="cb20-23"><a href="#cb20-23" aria-hidden="true" tabindex="-1"></a>  <span class="fu">facet_grid</span>(estimand_label <span class="sc">~</span> scale, <span class="at">scales =</span> <span class="st">"free"</span>) <span class="sc">+</span></span>
-<span id="cb20-24"><a href="#cb20-24" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_vline</span>(<span class="at">data =</span> truth_lines,</span>
-<span id="cb20-25"><a href="#cb20-25" aria-hidden="true" tabindex="-1"></a>             <span class="fu">aes</span>(<span class="at">xintercept =</span> xint), <span class="at">linetype =</span> <span class="st">"dashed"</span>, <span class="at">color =</span> <span class="st">"red"</span>) <span class="sc">+</span></span>
-<span id="cb20-26"><a href="#cb20-26" aria-hidden="true" tabindex="-1"></a>  <span class="fu">labs</span>(<span class="at">x =</span> <span class="st">"Estimate"</span>, <span class="at">y =</span> <span class="st">"Count"</span>, <span class="at">fill =</span> <span class="st">"Method"</span>,</span>
-<span id="cb20-27"><a href="#cb20-27" aria-hidden="true" tabindex="-1"></a>       <span class="at">title =</span> <span class="st">"Estimator Performance Within Each Estimand"</span>) <span class="sc">+</span></span>
-<span id="cb20-28"><a href="#cb20-28" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_minimal</span>(<span class="at">base_size =</span> <span class="dv">12</span>) <span class="sc">+</span></span>
-<span id="cb20-29"><a href="#cb20-29" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(<span class="at">legend.position =</span> <span class="st">"bottom"</span>)</span>
-<span id="cb20-30"><a href="#cb20-30" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Warning: Removed 20 rows containing non-finite outside the scale range</span></span>
-<span id="cb20-31"><a href="#cb20-31" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; (`stat_bin()`).</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb20"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Plot only risk differences (not HRs) for clarity</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>sim_plot_rd <span class="ot">&lt;-</span> sim_results <span class="sc">%&gt;%</span></span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(converged, <span class="sc">!</span><span class="fu">is.na</span>(risk_diff)) <span class="sc">%&gt;%</span></span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">estimand_label =</span> estimand_labels[estimand])</span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a>truth_lines <span class="ot">&lt;-</span> <span class="fu">tibble</span>(</span>
+<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">estimand_label =</span> <span class="fu">unname</span>(estimand_labels[<span class="fu">names</span>(truth_all)]),</span>
+<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">xint =</span> <span class="fu">sapply</span>(truth_all, <span class="cf">function</span>(x) x<span class="sc">$</span>true_rd)</span>
+<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb20-10"><a href="#cb20-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb20-11"><a href="#cb20-11" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(sim_plot_rd, <span class="fu">aes</span>(<span class="at">x =</span> risk_diff, <span class="at">fill =</span> method)) <span class="sc">+</span></span>
+<span id="cb20-12"><a href="#cb20-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_histogram</span>(<span class="at">alpha =</span> <span class="fl">0.6</span>, <span class="at">bins =</span> <span class="dv">20</span>, <span class="at">position =</span> <span class="st">"identity"</span>) <span class="sc">+</span></span>
+<span id="cb20-13"><a href="#cb20-13" aria-hidden="true" tabindex="-1"></a>  <span class="fu">facet_wrap</span>(<span class="sc">~</span> estimand_label, <span class="at">scales =</span> <span class="st">"free"</span>, <span class="at">ncol =</span> <span class="dv">2</span>) <span class="sc">+</span></span>
+<span id="cb20-14"><a href="#cb20-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_vline</span>(<span class="at">data =</span> truth_lines,</span>
+<span id="cb20-15"><a href="#cb20-15" aria-hidden="true" tabindex="-1"></a>             <span class="fu">aes</span>(<span class="at">xintercept =</span> xint), <span class="at">linetype =</span> <span class="st">"dashed"</span>, <span class="at">color =</span> <span class="st">"red"</span>) <span class="sc">+</span></span>
+<span id="cb20-16"><a href="#cb20-16" aria-hidden="true" tabindex="-1"></a>  <span class="fu">labs</span>(<span class="at">x =</span> <span class="st">"Risk Difference"</span>, <span class="at">y =</span> <span class="st">"Count"</span>, <span class="at">fill =</span> <span class="st">"Method"</span>) <span class="sc">+</span></span>
+<span id="cb20-17"><a href="#cb20-17" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_minimal</span>(<span class="at">base_size =</span> <span class="dv">11</span>) <span class="sc">+</span></span>
+<span id="cb20-18"><a href="#cb20-18" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(<span class="at">legend.position =</span> <span class="st">"bottom"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 <div class="cell-output-display">
 <div id="fig-sim-performance" class="quarto-float quarto-figure quarto-figure-center anchored" data-fig-align="center">
 <figure class="quarto-float quarto-float-fig figure">
@@ -1361,109 +1215,47 @@ Table&nbsp;3: Simulation results by estimand (20 iterations, N = 10,000)
 <img src="draft-estimands-results-outline_files/figure-html/fig-sim-performance-1.png" class="img-fluid quarto-figure quarto-figure-center figure-img" width="864">
 </div>
 <figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig" id="fig-sim-performance-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Figure&nbsp;2: Distribution of estimates across simulation iterations, by estimand and method. Red dashed line = true risk difference.
+Figure&nbsp;4: Distribution of risk difference estimates across iterations. Red dashed line indicates true RD.
 </figcaption>
 </figure>
 </div>
 </div>
 </div>
-<div class="cell" data-layout-align="center">
-<div class="sourceCode cell-code" id="cb21"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>conv_summary <span class="ot">&lt;-</span> sim_results <span class="sc">%&gt;%</span></span>
-<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">group_by</span>(estimand, method) <span class="sc">%&gt;%</span></span>
-<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">summarise</span>(</span>
-<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>    <span class="at">total =</span> <span class="fu">n</span>(),</span>
-<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>    <span class="at">converged =</span> <span class="fu">sum</span>(converged),</span>
-<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">failed =</span> <span class="fu">sum</span>(<span class="sc">!</span>converged),</span>
-<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a>    <span class="at">.groups =</span> <span class="st">"drop"</span></span>
-<span id="cb21-8"><a href="#cb21-8" aria-hidden="true" tabindex="-1"></a>  )</span>
-<span id="cb21-9"><a href="#cb21-9" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Convergence summary:</span><span class="sc">\n</span><span class="st">"</span>)</span>
-<span id="cb21-10"><a href="#cb21-10" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; Convergence summary:</span></span>
-<span id="cb21-11"><a href="#cb21-11" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(conv_summary)</span>
-<span id="cb21-12"><a href="#cb21-12" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; # A tibble: 15 × 5</span></span>
-<span id="cb21-13"><a href="#cb21-13" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    estimand           method                   total converged failed</span></span>
-<span id="cb21-14"><a href="#cb21-14" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;    &lt;chr&gt;              &lt;chr&gt;                    &lt;int&gt;     &lt;int&gt;  &lt;int&gt;</span></span>
-<span id="cb21-15"><a href="#cb21-15" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  1 composite          Cox censor-at-switch        20        20      0</span></span>
-<span id="cb21-16"><a href="#cb21-16" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  2 composite          Cox naive                   20        20      0</span></span>
-<span id="cb21-17"><a href="#cb21-17" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  3 composite          LMTP SDR                    20        20      0</span></span>
-<span id="cb21-18"><a href="#cb21-18" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  4 no_switch          Cox censor-at-switch        20        20      0</span></span>
-<span id="cb21-19"><a href="#cb21-19" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  5 no_switch          Cox naive                   20        20      0</span></span>
-<span id="cb21-20"><a href="#cb21-20" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  6 no_switch          LMTP SDR                    20        20      0</span></span>
-<span id="cb21-21"><a href="#cb21-21" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  7 principal_stratum  Cox censor-at-switch        20        20      0</span></span>
-<span id="cb21-22"><a href="#cb21-22" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  8 principal_stratum  Cox naive                   20        20      0</span></span>
-<span id="cb21-23"><a href="#cb21-23" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt;  9 principal_stratum  LMTP SDR (non-switchers)    20        20      0</span></span>
-<span id="cb21-24"><a href="#cb21-24" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 10 treatment_policy   Cox censor-at-switch        20        20      0</span></span>
-<span id="cb21-25"><a href="#cb21-25" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 11 treatment_policy   Cox naive                   20        20      0</span></span>
-<span id="cb21-26"><a href="#cb21-26" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 12 treatment_policy   LMTP SDR                    20        20      0</span></span>
-<span id="cb21-27"><a href="#cb21-27" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 13 while_on_treatment Cox censor-at-switch        20        20      0</span></span>
-<span id="cb21-28"><a href="#cb21-28" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 14 while_on_treatment Cox naive                   20        20      0</span></span>
-<span id="cb21-29"><a href="#cb21-29" aria-hidden="true" tabindex="-1"></a><span class="co">#&gt; 15 while_on_treatment LMTP SDR                    20        20      0</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
-</div>
-</section>
 </section>
 <section id="interpretation" class="level2">
 <h2 class="anchored" data-anchor-id="interpretation">Interpretation</h2>
-<p>The simulation results reveal several important patterns about estimand-estimator alignment.</p>
-<section id="cox-regression-is-dominated-by-confounding-bias" class="level3">
-<h3 class="anchored" data-anchor-id="cox-regression-is-dominated-by-confounding-bias">Cox regression is dominated by confounding bias</h3>
-<p>Across all five estimands, the unadjusted Cox hazard ratios and Kaplan-Meier risk differences are severely biased. The KM risk difference averages approximately +0.08 when the true risk difference is near zero for most estimands, and Cox coverage is 0% in every case. This bias arises because CKD patients are more likely to receive the active drug <em>and</em> to experience renal failure. The confounding inflates the apparent treatment effect by a factor of 10–80 depending on the estimand.</p>
-<p>The Cox naive and censor-at-switch estimators differ for the treatment-policy estimand (HR 1.21 vs 1.19; RD 0.086 vs 0.076), demonstrating that censoring at switch attenuates the estimate slightly by removing the highest-risk person-time. Under no-switch, the two are identical—as expected, since there is no switching to censor.</p>
-<p>For the composite estimand, Cox performs relatively better (HR bias of +0.10 vs true HR of 1.70) because the large composite effect (driven by differential switching) dominates the confounding bias.</p>
-</section>
-<section id="lmtp-reduces-but-does-not-eliminate-bias" class="level3">
-<h3 class="anchored" data-anchor-id="lmtp-reduces-but-does-not-eliminate-bias">LMTP reduces but does not eliminate bias</h3>
-<p>LMTP produces substantially less biased estimates than Cox for most estimands. For the no-switch and while-on-treatment estimands (where the true RD is near zero), LMTP achieves 75–85% coverage despite a residual negative bias of approximately -0.014. This residual bias likely reflects the limitations of the current specification: biweekly time bins (13 time points) provide limited temporal resolution for the non-proportional hazard structure, and the Super Learner library (<code>SL.mean</code>, <code>SL.glm</code>, <code>SL.bayesglm</code>) may not fully capture the confounding adjustment.</p>
-<p>For the treatment-policy estimand (true RD = +0.007), LMTP coverage is 35%, reflecting a negative bias of -0.028. The estimator is correctly targeting the right parameter but the finite-sample performance is limited by the sparse event rate (~8%) and coarse time discretisation.</p>
-</section>
-<section id="the-composite-lmtp-is-misspecified" class="level3">
-<h3 class="anchored" data-anchor-id="the-composite-lmtp-is-misspecified">The composite LMTP is misspecified</h3>
-<p>LMTP produces a catastrophically wrong estimate for the composite estimand (mean RD = -0.16 vs truth = +0.15). This occurs because the LMTP analysis targets static baseline treatment interventions, while the composite outcome includes switching as an event. The LMTP censoring model treats switching as a censoring event to be adjusted away, which is the <em>opposite</em> of what the composite estimand requires. This illustrates that even an aligned estimator framework can produce wrong answers when the intervention definition does not match the estimand.</p>
-</section>
-<section id="principal-stratum-estimation-is-approximate" class="level3">
-<h3 class="anchored" data-anchor-id="principal-stratum-estimation-is-approximate">Principal stratum estimation is approximate</h3>
-<p>The LMTP analysis restricted to observed non-switchers (55% coverage) provides a rough approximation to the principal stratum estimand. The approximation is imperfect because observed non-switchers under one treatment arm are not the same as the latent “never-switcher” stratum (which requires not switching under <em>both</em> treatment assignments). More sophisticated principal stratum methods (e.g., sensitivity analysis under monotonicity) are needed for reliable estimation.</p>
-</section>
-<section id="the-central-lesson" class="level3">
-<h3 class="anchored" data-anchor-id="the-central-lesson">The central lesson</h3>
-<p>The results confirm that the primary problem in safety analyses with intercurrent events is <strong>estimand-estimator misalignment</strong>. Cox regression, regardless of how switching is handled, produces severely biased estimates due to uncontrolled confounding and conditional (rather than marginal) targeting. LMTP offers better alignment with the marginal risk contrasts defined by most estimands, but its performance depends on adequate temporal resolution, a sufficiently rich Super Learner library, and correct specification of the intervention relative to the estimand. Neither method is universally “better”—the question is whether the estimator targets the same quantity as the estimand.</p>
-</section>
+<p>Across all five estimands, the unadjusted Cox hazard ratios and Kaplan-Meier risk differences are substantially biased, with 0% coverage in every case. CKD confounds both treatment assignment and the outcome; the resulting bias inflates the apparent treatment effect by roughly an order of magnitude relative to the true risk difference for the non-composite estimands.</p>
+<p>The Cox naive and censor-at-switch estimators differ under the treatment-policy estimand (mean HR 1.21 vs 1.19), confirming that censoring at switch attenuates the estimate by selectively removing high-risk person-time. Under no-switch data, the two are identical, as expected.</p>
+<p>LMTP produces less biased estimates for most estimands. For the no-switch and while-on-treatment estimands (near-null true effects), coverage reaches 75–85%. For the treatment-policy estimand (true RD = +0.007), coverage is lower at 35%, reflecting a residual negative bias of approximately -0.03 that likely arises from the combination of biweekly time bins, a limited Super Learner library, and a sparse event rate (~8%).</p>
+<p>The composite LMTP estimate is severely biased (mean RD = -0.16 vs truth = +0.15). This is a specification error, not a failure of the LMTP framework: the static-intervention analysis adjusts away switching through its censoring model, which is the opposite of what the composite estimand requires (switching should be counted as an event, not modelled as censoring). The LMTP analysis restricted to observed non-switchers provides a rough approximation of the principal stratum (55% coverage), though the approximation is imperfect because observed non-switchers are not the same as the latent never-switcher stratum.</p>
 </section>
 <section id="sensitivity-to-unmeasured-confounding" class="level2">
 <h2 class="anchored" data-anchor-id="sensitivity-to-unmeasured-confounding">Sensitivity to Unmeasured Confounding</h2>
-<p>Even with a well-aligned estimator and adequate data support, the causal interpretation of any observational estimate rests on the assumption of no unmeasured confounding (exchangeability). The <strong>causal gap</strong> <span class="math inline">\(\delta = \psi_{\text{stat}} - \psi_{\text{causal}}\)</span> quantifies the difference between what the statistical estimand identifies and the true causal quantity. In a randomised trial, <span class="math inline">\(\delta = 0\)</span> by design; in an observational study, <span class="math inline">\(\delta\)</span> reflects residual confounding from unmeasured common causes of treatment and outcome.</p>
-<p>A useful diagnostic is the <strong>G-value</strong> (Gruber et al.&nbsp;2024): the minimum causal gap needed to shift the confidence interval to include the null. If the G-value is large relative to the magnitude of the measured confounding adjustment (the difference between unadjusted and adjusted estimates), the finding is robust. If it is small, even modest unmeasured confounding could nullify the result. Sensitivity analyses should examine how the point estimate and confidence interval change across a range of hypothesised <span class="math inline">\(\delta\)</span> values, typically from 0 to 5 times the measured confounding adjustment (Dang et al.&nbsp;2023).</p>
-<p>This tutorial does not implement a full sensitivity analysis, but the causal roadmap framework requires it as a distinct step (Step 6). In a complete analysis, a sensitivity plot showing shifted estimates and confidence bounds across a range of causal gap values should accompany every primary result.</p>
+<p>Even with a well-specified estimator and adequate support, causal interpretation requires no unmeasured confounding. The causal gap <span class="math inline">\(\delta = \psi_{\text{stat}} - \psi_{\text{causal}}\)</span> quantifies residual confounding from unmeasured common causes. The G-value (Gruber et al.&nbsp;2024)—the minimum causal gap needed to shift the confidence interval to include the null—provides a useful sensitivity diagnostic. If the G-value is large relative to the measured confounding adjustment, the finding is robust; if small, modest unmeasured confounding could nullify the result.</p>
+<p>This tutorial does not implement a full sensitivity analysis.</p>
 <!-- TODO(Joy): implement a nonparametric sensitivity analysis function and
      add a worked example to the simulation study. -->
 </section>
-<section id="key-messages" class="level2">
-<h2 class="anchored" data-anchor-id="key-messages">Key Messages</h2>
-<ol type="1">
-<li><p><strong>The same drug, five different answers.</strong> The true risk difference ranges from near zero (hypothetical no-switch, principal stratum) to +0.15 (composite), depending entirely on how treatment switching is handled. The treatment effect has no single value without specifying the estimand.</p></li>
-<li><p><strong>Cox regression is dominated by confounding bias.</strong> Across all five estimands, unadjusted Cox models produce 0% coverage. The confounding from CKD (which drives both treatment assignment and the outcome) inflates the apparent treatment effect by an order of magnitude. This bias is not a property of the Cox model per se, but of using unadjusted or insufficiently adjusted regression in the presence of strong confounding.</p></li>
-<li><p><strong>Hazard ratios are not risk contrasts.</strong> Even when the Cox HR is close to the true HR (as in the composite estimand), the KM risk difference remains biased because unadjusted survival curves do not target the marginal risk under intervention. Estimands defined as risk contrasts require estimators that target risk contrasts.</p></li>
-<li><p><strong>LMTP reduces bias but does not eliminate it.</strong> LMTP achieves 75–85% coverage for the no-switch and while-on-treatment estimands (near-null true effects) but only 35% for the treatment-policy estimand. Performance depends on temporal resolution, Super Learner specification, and event rate. Production analyses should use finer time bins and richer learner libraries.</p></li>
-<li><p><strong>Misspecified interventions produce wrong answers.</strong> The composite LMTP fails catastrophically (bias = -0.31) because the LMTP intervention (static treatment assignment) does not match the composite estimand (which absorbs switching into the outcome). Even a well-designed estimator framework produces wrong answers when the intervention definition is misaligned with the estimand.</p></li>
-<li><p><strong>Support diagnostics are mandatory.</strong> Estimation degrades as positivity weakens. Under poor support, Cox HRs become unstable (HR = 2.27 for censor-at-switch) and LMTP estimates show increased bias and wider confidence intervals.</p></li>
-<li><p><strong>Report transparently.</strong> State the estimand, the assumptions required for identification, the diagnostics that support (or fail to support) those assumptions, the alignment between the estimator and the estimand, and the limitations of the specification (time binning, learner library, finite-sample bias).</p></li>
-</ol>
+<section id="summary" class="level2">
+<h2 class="anchored" data-anchor-id="summary">Summary</h2>
+<p>Three observations emerge from this simulation study. First, conventional Cox regression analyses—whether ignoring switching, censoring at switch, or including time-dependent treatment—produce biased estimates of every estimand examined here, primarily because of uncontrolled confounding. Second, LMTP substantially reduces this bias for estimands that match its intervention specification (treatment-policy, hypothetical no-switch, while-on-treatment), but residual bias remains under the current specification. Third, the same drug yields markedly different risk differences depending on how switching is handled—from near zero (hypothetical, principal stratum) to +0.15 (composite)—and the choice of estimand strategy should be driven by the clinical question, not by computational convenience.</p>
+<p>These results also highlight two limitations. LMTP performance depends on the temporal resolution of time bins and the flexibility of the Super Learner library; the biweekly bins and minimal learner set used here are likely insufficient for production analyses. And when the intervention specification does not match the estimand (as with the composite), even a well-designed estimator framework produces wrong answers. Transparent reporting of estimand, assumptions, diagnostics, and estimator specification is essential.</p>
 </section>
-<section id="sources" class="level2">
-<h2 class="anchored" data-anchor-id="sources">Sources</h2>
+<section id="references" class="level2">
+<h2 class="anchored" data-anchor-id="references">References</h2>
 <ul>
 <li>ICH E9(R1) Addendum (2019). Addendum on estimands and sensitivity analyses in clinical trials.</li>
 <li>Williams N, Diaz I (2023). lmtp: Non-parametric causal effects of feasible interventions based on modified treatment policies. R package.</li>
-<li>van der Laan MJ, Rose S (2011). Targeted Learning: Causal Inference for Observational and Experimental Data.</li>
-<li>Hernan MA, Robins JM (2020). Causal Inference: What If.</li>
-<li>Dang LE, Tarp JM, Abrahamsen B, et al.&nbsp;(2023). A causal roadmap for generating high-quality real-world evidence. Journal of Clinical and Translational Science.</li>
-<li>Gruber S, Lee H, Phillips R, Ho M, van der Laan MJ (2022). Developing a targeted learning-based statistical analysis plan. Statistics in Biopharmaceutical Research.</li>
-<li>Gruber S, Phillips RV, Lee H, van der Laan MJ (2024). Targeted learning: toward a future informed by real-world evidence. Statistics in Biopharmaceutical Research.</li>
-<li>Chen RC, Rosenblum M, van der Laan MJ, Gruber S (2023). Beyond the Cox hazard ratio: a targeted learning approach to survival analysis in a cardiovascular outcome trial application. Clinical Trials.</li>
-<li>Martinussen T (2022). Causality and the Cox regression model. Annual Review of Statistics and Its Application.</li>
-<li>Stensrud MJ, Aalen JM, Aalen OO, Valberg M (2019). Limitations of hazard ratios in clinical trials. European Heart Journal.</li>
-<li>Rufibach K (2019). Treatment effect quantification for time-to-event endpoints: estimands, analysis strategies, and beyond. Pharmaceutical Statistics.</li>
-<li>Petersen ML (2014). Applying a causal road map in settings with time-dependent confounding. Epidemiology.</li>
-<li>Rytgaard HC, Eriksson F, van der Laan MJ (2023). Estimation of time-specific intervention effects on continuously distributed time-to-event outcomes by targeted maximum likelihood estimation. Biometrics, 79(4):3038–3049.</li>
-<li>Chen D, Rytgaard HC, Fong E, Tarp JM, Petersen ML, van der Laan MJ, Gerds TA (2023). concrete: Targeted estimation of survival and competing risks in continuous time. arXiv:2310.19197.</li>
+<li>van der Laan MJ, Rose S (2011). <em>Targeted Learning.</em> Springer.</li>
+<li>Hernan MA, Robins JM (2020). <em>Causal Inference: What If.</em> Chapman &amp; Hall.</li>
+<li>Dang LE, Tarp JM, Abrahamsen B, et al.&nbsp;(2023). A causal roadmap for generating high-quality real-world evidence. <em>J Clin Transl Sci.</em></li>
+<li>Gruber S, Lee H, Phillips R, Ho M, van der Laan MJ (2022). Developing a targeted learning-based statistical analysis plan. <em>Stat Biopharm Res.</em></li>
+<li>Gruber S, Phillips RV, Lee H, van der Laan MJ (2024). Targeted learning: toward a future informed by real-world evidence. <em>Stat Biopharm Res.</em></li>
+<li>Chen RC, Rosenblum M, van der Laan MJ, Gruber S (2023). Beyond the Cox hazard ratio. <em>Clinical Trials.</em></li>
+<li>Martinussen T (2022). Causality and the Cox regression model. <em>Annu Rev Stat Appl.</em></li>
+<li>Stensrud MJ, Aalen JM, Aalen OO, Valberg M (2019). Limitations of hazard ratios in clinical trials. <em>Eur Heart J.</em></li>
+<li>Rufibach K (2019). Treatment effect quantification for time-to-event endpoints. <em>Pharm Stat.</em></li>
+<li>Petersen ML (2014). Applying a causal road map in settings with time-dependent confounding. <em>Epidemiology.</em></li>
 </ul>
 </section>
 </section>
