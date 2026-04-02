@@ -33,7 +33,7 @@ source(here("R", "helpers.R"))
 run_one_iter <- function(i, estimand = "treatment_policy",
                          sample_size = 1000, tau = 180,
                          bin_width = 30,
-                         lmtp_learners = c("SL.mean", "SL.glmnet", "SL.bayesglm"),
+                         lmtp_learners = c("SL.mean", "SL.bayesglm"),
                          run_lmtp = TRUE, run_cox_td = FALSE,
                          dgp_args = list()) {
   set.seed(1000 + i)
@@ -136,7 +136,7 @@ run_one_iter <- function(i, estimand = "treatment_policy",
 #' @return data.frame of aggregated results.
 run_simulation_study <- function(n_iter = 200, sample_size = 1000,
                                  tau = 180, bin_width = 30,
-                                 lmtp_learners = c("SL.mean", "SL.glmnet", "SL.bayesglm"),
+                                 lmtp_learners = c("SL.mean", "SL.bayesglm"),
                                  estimands = c("treatment_policy", "no_switch"),
                                  run_lmtp = TRUE, run_cox_td = FALSE,
                                  dgp_args = list(),

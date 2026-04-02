@@ -60,10 +60,9 @@ if (!file.exists(lmtp_cache)) {
   message("\n=== Running main LMTP analysis (N=10000, bin_width=", BIN_WIDTH, ") ===")
   requireNamespace("lmtp", quietly = TRUE)
   requireNamespace("SuperLearner", quietly = TRUE)
-  requireNamespace("glmnet", quietly = TRUE)
   requireNamespace("arm", quietly = TRUE)
 
-  SL_LIBRARY <- c("SL.mean", "SL.glmnet", "SL.bayesglm")
+  SL_LIBRARY <- c("SL.mean", "SL.bayesglm")
 
   set.seed(2026)
   dat <- generate_hep_data(
@@ -138,7 +137,7 @@ if (!file.exists(support_cache)) {
     lmtp_rd <- tryCatch({
       prep <- prepare_lmtp_data(d, tau = tau, bin_width = BIN_WIDTH)
       res <- run_lmtp_analysis(prep, folds = 2,
-                               learners = c("SL.mean", "SL.glmnet", "SL.bayesglm"))
+                               learners = c("SL.mean", "SL.bayesglm"))
       res$contrast_rd$estimates$estimate
     }, error = function(e) NA_real_)
 
