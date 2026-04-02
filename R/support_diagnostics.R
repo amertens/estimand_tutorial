@@ -156,24 +156,31 @@ summarize_support <- function(dat, scenario_label = "Default") {
 #' @param scenario_list named list of data.frames, each from DGP.
 #' @return ggplot object.
 plot_support_scenarios <- function(scenario_list) {
-  sw_col <- "switched"
-
-  combined <- bind_rows(lapply(names(scenario_list), function(nm) {
+  pieces <- list()
+  for (nm in names(scenario_list)) {
     d <- scenario_list[[nm]]
-    if (!"switched" %in% names(d)) sw_col <<- "switch"
+
+    # Determine switching column name
+    sw_col <- if ("switched" %in% names(d)) "switched" else "switch"
 
     # Fit switching model
     covars <- intersect(c("age", "ckd", "treatment", "cirrhosis", "diabetes"),
                         names(d))
     fml <- as.formula(paste(sw_col, "~", paste(covars, collapse = " + ")))
     sw_mod <- glm(fml, data = d, family = binomial)
-    d$p_switch <- predict(sw_mod, type = "response")
-    d$scenario <- nm
-    d$trt_label <- ifelse(d$treatment == 1, "Active", "Comparator")
-    d$ckd_label <- ifelse(d$ckd == 1, "CKD", "No CKD")
-    d %>% select(id, treatment, trt_label, ckd_label, p_switch,
-                 scenario, all_of(sw_col))
-  }))
+
+    pieces[[nm]] <- data.frame(
+      id        = d$id,
+      treatment = d$treatment,
+      ckd       = d$ckd,
+      p_switch  = predict(sw_mod, type = "response"),
+      scenario  = nm,
+      stringsAsFactors = FALSE
+    )
+  }
+  combined <- do.call(rbind, pieces)
+  combined$trt_label <- ifelse(combined$treatment == 1, "Active", "Comparator")
+  combined$ckd_label <- ifelse(combined$ckd == 1, "CKD", "No CKD")
 
   # Panel 1: Switching probability by treatment arm
   p1 <- ggplot(combined, aes(x = p_switch, fill = trt_label)) +
@@ -197,7 +204,6 @@ plot_support_scenarios <- function(scenario_list) {
     scale_fill_manual(values = c("darkorange", "dodgerblue")) +
     theme(legend.position = "bottom")
 
-  # Return both; caller can use patchwork or gridExtra to combine
   list(by_treatment = p1, by_ckd = p2)
 }
 
