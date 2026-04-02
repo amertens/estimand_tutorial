@@ -22,7 +22,9 @@ source(here("DGP.R"))
 source(here("R", "helpers.R"))
 
 # Number of parallel workers (set to number of cores)
-N_CORES <- 8L
+# Set to 1 for serial execution (reliable). Increase for parallel once
+# the PSOCK worker environment issue is resolved.
+N_CORES <- 1L
 
 # ── Single iteration for one estimand ────────────────────────────────────────
 #' Run one iteration of the simulation study for a specific estimand.
