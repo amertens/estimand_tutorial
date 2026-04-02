@@ -91,6 +91,162 @@ truth_no_switch <- function(N = 500000, tau = 180, seed = 9999, ...) {
 }
 
 
+# ── Truth: While-on-Treatment Estimand ───────────────────────────────────────
+#' Compute true risks under the while-on-treatment estimand.
+#' Under while-on-treatment, subjects are censored at their switch time.
+#' Only events occurring before switching contribute. We generate large
+#' counterfactual datasets with policy="while_on_treatment" and no dependent
+#' censoring, then compute 180-day cumulative incidence among non-switchers.
+#'
+#' Note: for the truth calculation under treat_override, all subjects receive
+#' the same treatment so switching patterns differ from the observed data.
+#' We use policy="no_switch" with switch_on=FALSE to get the clean
+#' potential outcome under sustained treatment (equivalent to while-on-treatment
+#' when everyone stays on their assigned treatment).
+#'
+#' @param N integer; Monte Carlo sample size.
+#' @param tau integer; risk window in days.
+#' @param seed integer; random seed.
+#' @param ... additional DGP arguments.
+#' @return list with true_risk_1, true_risk_0, true_rd, true_rr.
+truth_while_on_treatment <- function(N = 500000, tau = 180, seed = 9999, ...) {
+  dots <- list(...)
+
+  # While-on-treatment under all-treated or all-control means nobody switches
+  # away (everyone is on the same drug). This is equivalent to the no-switch
+  # truth for counterfactual populations, but the estimand interpretation
+  # differs: WOT conditions on not switching rather than intervening to
+  # prevent switching. The numerical truth is identical when treat_override
+  # forces uniform treatment.
+  common <- list(
+    N          = N,
+    dep_censor = FALSE,
+    policy     = "no_switch",
+    seed       = seed
+  )
+  common <- modifyList(common, dots)
+
+  df_a1 <- do.call(generate_hep_data,
+                    modifyList(common, list(treat_override = "all_treated")))
+  df_a0 <- do.call(generate_hep_data,
+                    modifyList(common, list(treat_override = "all_control")))
+
+  risk_1 <- mean(df_a1$event == 1 & df_a1$follow_time <= tau)
+  risk_0 <- mean(df_a0$event == 1 & df_a0$follow_time <= tau)
+
+  list(
+    estimand    = "while_on_treatment",
+    true_risk_1 = risk_1,
+    true_risk_0 = risk_0,
+    true_rd     = risk_1 - risk_0,
+    true_rr     = risk_1 / risk_0,
+    N           = N,
+    tau         = tau
+  )
+}
+
+
+# ── Truth: Composite Estimand ────────────────────────────────────────────────
+#' Compute true risks under the composite estimand.
+#' Under composite, the outcome is AKI *or* switching (whichever comes first).
+#' We generate all-treated and all-control datasets with policy="composite"
+#' and compute 180-day cumulative incidence of the composite endpoint.
+#'
+#' @param N integer; Monte Carlo sample size.
+#' @param tau integer; risk window in days.
+#' @param seed integer; random seed.
+#' @param ... additional DGP arguments.
+#' @return list with true_risk_1, true_risk_0, true_rd, true_rr.
+truth_composite <- function(N = 500000, tau = 180, seed = 9999, ...) {
+  dots <- list(...)
+
+  common <- list(
+    N          = N,
+    dep_censor = FALSE,
+    policy     = "composite",
+    seed       = seed
+  )
+  common <- modifyList(common, dots)
+
+  df_a1 <- do.call(generate_hep_data,
+                    modifyList(common, list(treat_override = "all_treated")))
+  df_a0 <- do.call(generate_hep_data,
+                    modifyList(common, list(treat_override = "all_control")))
+
+  risk_1 <- mean(df_a1$event == 1 & df_a1$follow_time <= tau)
+  risk_0 <- mean(df_a0$event == 1 & df_a0$follow_time <= tau)
+
+  list(
+    estimand    = "composite",
+    true_risk_1 = risk_1,
+    true_risk_0 = risk_0,
+    true_rd     = risk_1 - risk_0,
+    true_rr     = risk_1 / risk_0,
+    N           = N,
+    tau         = tau
+  )
+}
+
+
+# ── Truth: Principal Stratum Estimand ────────────────────────────────────────
+#' Compute true risks under the principal stratum estimand.
+#' The principal stratum of "never-switchers" consists of subjects who
+#' would not switch under either treatment assignment. Since we control
+#' the DGP, we can identify this stratum by generating switching times
+#' under both treatments for the same subjects and restricting to those
+#' who would not switch under either.
+#'
+#' Implementation: generate a cohort with no treatment override, draw
+#' switching times under both treatments using the same random seed for
+#' baseline covariates, identify the never-switcher stratum, then compute
+#' event risks for that subpopulation.
+#'
+#' @param N integer; Monte Carlo sample size.
+#' @param tau integer; risk window in days.
+#' @param seed integer; random seed.
+#' @param ... additional DGP arguments.
+#' @return list with true_risk_1, true_risk_0, true_rd, true_rr.
+truth_principal_stratum <- function(N = 500000, tau = 180, seed = 9999, ...) {
+  dots <- list(...)
+
+  common <- list(
+    N          = N,
+    dep_censor = FALSE,
+    policy     = "treatment_policy",
+    seed       = seed
+  )
+  common <- modifyList(common, dots)
+
+  # Generate under all-treated and all-control with the SAME seed
+  # so baseline covariates are identical across the two worlds.
+  df_a1 <- do.call(generate_hep_data,
+                    modifyList(common, list(treat_override = "all_treated")))
+  df_a0 <- do.call(generate_hep_data,
+                    modifyList(common, list(treat_override = "all_control")))
+
+  # Never-switchers: would not switch under either treatment
+  # would_switch is based on switch_time <= max_follow
+  never_switcher <- df_a1$would_switch == 0 & df_a0$would_switch == 0
+
+  risk_1 <- mean(df_a1$event[never_switcher] == 1 &
+                   df_a1$follow_time[never_switcher] <= tau)
+  risk_0 <- mean(df_a0$event[never_switcher] == 1 &
+                   df_a0$follow_time[never_switcher] <= tau)
+
+  list(
+    estimand      = "principal_stratum",
+    true_risk_1   = risk_1,
+    true_risk_0   = risk_0,
+    true_rd       = risk_1 - risk_0,
+    true_rr       = risk_1 / risk_0,
+    n_never_switch = sum(never_switcher),
+    pct_never_switch = mean(never_switcher),
+    N             = N,
+    tau           = tau
+  )
+}
+
+
 # ── Compute and save ─────────────────────────────────────────────────────────
 
 if (sys.nframe() == 0) {

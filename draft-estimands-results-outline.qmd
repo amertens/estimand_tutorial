@@ -178,9 +178,9 @@ ggdag(dag_safety, text = FALSE, use_labels = "label", text_size = 3) +
   theme_dag()
 ```
 
-## Two Estimand Strategies
+## Five Estimand Strategies Under ICH E9(R1)
 
-We focus on two ICH E9(R1) strategies that most clearly illustrate the alignment problem. Other strategies (while-on-treatment, composite, principal stratum) exist but are not the focus here.
+The ICH E9(R1) addendum defines five strategies for handling intercurrent events. In a safety study where the primary intercurrent event is treatment switching, each strategy answers a different clinical question. We define and simulate all five below.
 
 ### Estimand 1: Treatment-Policy
 
@@ -198,9 +198,45 @@ We focus on two ICH E9(R1) strategies that most clearly illustrate the alignment
 
 **Target parameter:** $\psi^{HYP} = E[Y^{a=1, \text{no switch}}(180)] - E[Y^{a=0, \text{no switch}}(180)]$
 
-### Why These Two
+### Estimand 3: While-on-Treatment
 
-The treatment-policy estimand is relevant when the clinical question concerns the real-world consequences of initiating a regimen, including all downstream treatment decisions. The hypothetical estimand is relevant when the question concerns the direct pharmacological effect of the drug, absent any treatment modifications. Both are commonly targeted in safety analyses, and both are susceptible to estimand-estimator misalignment when conventional regression is used.
+**Question:** What is the risk of renal failure while patients remain on their assigned treatment?
+
+**Intercurrent event strategy:** Censor at the time of switching. Only events occurring before any switch contribute to the analysis.
+
+**Target parameter:** $\psi^{WOT} = E[Y^{a=1}(180) \mid \text{no switch by } 180] - E[Y^{a=0}(180) \mid \text{no switch by } 180]$
+
+This estimand is clinically relevant: it captures the treatment effect during the period patients can actually tolerate therapy. When switching is informative, naive estimation (simply censoring at switch in a Cox model) is particularly susceptible to bias because the patients removed are those at highest risk. Inverse probability of censoring weighting (IPCW) or LMTP with a censoring model for switching can reduce this bias.
+
+### Estimand 4: Composite
+
+**Question:** What is the risk of renal failure *or* treatment switching (whichever comes first) by 180 days?
+
+**Intercurrent event strategy:** Absorb switching into the outcome. Switching is treated as a component of a composite endpoint alongside renal failure.
+
+**Target parameter:** $\psi^{COMP} = E[Y_{comp}^{a=1}(180)] - E[Y_{comp}^{a=0}(180)]$, where $Y_{comp}^a(t) = 1$ if renal failure or switching occurs by time $t$ under regime $a$.
+
+This strategy avoids the need to model switching, since it is no longer an intercurrent event but part of the outcome. The trade-off is interpretability: the composite conflates treatment tolerability (switching due to toxicity) with the safety outcome (renal failure).
+
+### Estimand 5: Principal Stratum
+
+**Question:** What is the risk of renal failure by 180 days among patients who *would not switch* under either treatment assignment?
+
+**Intercurrent event strategy:** Restrict to the principal stratum of "never-switchers"---patients who would remain on treatment regardless of which drug they received.
+
+**Target parameter:** $\psi^{PS} = E[Y^{a=1}(180) \mid S^{a=1} = 0, S^{a=0} = 0] - E[Y^{a=0}(180) \mid S^{a=1} = 0, S^{a=0} = 0]$, where $S^a$ indicates switching under regime $a$.
+
+The principal stratum is defined by joint potential outcomes for switching and is not directly observable. Identification requires strong assumptions (e.g., monotonicity: if a patient would not switch on the active drug, they would not switch on the comparator). In the simulation, we can identify the true never-switcher stratum because we control the DGP.
+
+### Summary
+
+| Strategy | Handling | Key assumption | Primary trade-off |
+|---|---|---|---|
+| **Treatment-policy** | Ignore switching | None for switching | Includes post-switch outcomes |
+| **Hypothetical** | Model world without switching | Correct switching model | Requires modelling the switching mechanism |
+| **While-on-treatment** | Censor at switch | Non-informative censoring (or IPCW) | Bias if switching is informative |
+| **Composite** | Include switching in outcome | None for switching | Conflates switching and renal failure |
+| **Principal stratum** | Restrict to never-switchers | Monotonicity | Targets a latent subpopulation |
 
 ## Estimand-Estimator Alignment
 
@@ -225,7 +261,21 @@ alignment_tbl <- tibble::tribble(
   "Hypothetical no-switch", "Cox naive (ignore switch)", "No",
     "Includes post-switch outcomes; does not model the hypothetical world",
   "Hypothetical no-switch", "Cox censor-at-switch", "No",
-    "Assumes non-informative censoring; biased when switching is informative"
+    "Assumes non-informative censoring; biased when switching is informative",
+  "While-on-treatment", "LMTP SDR (censor model for switch)", "Yes",
+    "Targets marginal risk while on treatment; upweights patients who stay despite high switch propensity",
+  "While-on-treatment", "Cox censor-at-switch", "No",
+    "Assumes non-informative censoring; biased when high-risk patients preferentially switch",
+  "While-on-treatment", "Cox naive (ignore switch)", "No",
+    "Includes post-switch person-time; does not restrict to on-treatment experience",
+  "Composite", "LMTP SDR (composite outcome)", "Yes",
+    "Targets marginal risk of composite (renal failure or switch); no switching model needed",
+  "Composite", "Cox naive (composite outcome)", "Partial",
+    "HR for composite endpoint; conditional not marginal, but switching is not an ICE",
+  "Principal stratum", "LMTP SDR (restricted to never-switchers)", "Approximate",
+    "Requires identifying the latent never-switcher stratum; strong assumptions",
+  "Principal stratum", "Cox naive (subset analysis)", "No",
+    "Observed non-switchers are not the same as the principal stratum"
 )
 
 kable(alignment_tbl, format = "pipe")
@@ -395,17 +445,33 @@ truth_cache <- here("results", "sim_results", "ground_truth.rds")
 stopifnot("Run R/run_cached_analyses.R first" = file.exists(truth_cache))
 truth_all <- readRDS(truth_cache)
 
-cat("=== Treatment-Policy Truth ===\n")
-cat("True risk (active, 180d):", round(truth_all$treatment_policy$true_risk_1, 5), "\n")
-cat("True risk (comparator, 180d):", round(truth_all$treatment_policy$true_risk_0, 5), "\n")
-cat("True RD:", round(truth_all$treatment_policy$true_rd, 5), "\n")
-cat("True RR:", round(truth_all$treatment_policy$true_rr, 4), "\n")
+truth_summary <- tibble::tibble(
+  Estimand = c("Treatment-policy", "Hypothetical no-switch",
+               "While-on-treatment", "Composite", "Principal stratum"),
+  `Risk (active)` = c(truth_all$treatment_policy$true_risk_1,
+                       truth_all$no_switch$true_risk_1,
+                       truth_all$while_on_treatment$true_risk_1,
+                       truth_all$composite$true_risk_1,
+                       truth_all$principal_stratum$true_risk_1),
+  `Risk (comparator)` = c(truth_all$treatment_policy$true_risk_0,
+                           truth_all$no_switch$true_risk_0,
+                           truth_all$while_on_treatment$true_risk_0,
+                           truth_all$composite$true_risk_0,
+                           truth_all$principal_stratum$true_risk_0),
+  `Risk Difference` = c(truth_all$treatment_policy$true_rd,
+                         truth_all$no_switch$true_rd,
+                         truth_all$while_on_treatment$true_rd,
+                         truth_all$composite$true_rd,
+                         truth_all$principal_stratum$true_rd),
+  `Risk Ratio` = c(truth_all$treatment_policy$true_rr,
+                    truth_all$no_switch$true_rr,
+                    truth_all$while_on_treatment$true_rr,
+                    truth_all$composite$true_rr,
+                    truth_all$principal_stratum$true_rr)
+)
 
-cat("\n=== Hypothetical No-Switch Truth ===\n")
-cat("True risk (active, 180d):", round(truth_all$no_switch$true_risk_1, 5), "\n")
-cat("True risk (comparator, 180d):", round(truth_all$no_switch$true_risk_0, 5), "\n")
-cat("True RD:", round(truth_all$no_switch$true_rd, 5), "\n")
-cat("True RR:", round(truth_all$no_switch$true_rr, 4), "\n")
+kable(truth_summary, digits = 5, format = "pipe",
+      caption = "True 180-day risks by estimand (Monte Carlo, N = 500,000)")
 ```
 
 ## Data Support Diagnostics {#sec-support}
@@ -528,29 +594,30 @@ sim_results <- readRDS(sim_cache)
 ### Results by Estimand
 
 ```{r}
-#| label: tbl-sim-tp
-#| tbl-cap: "Simulation results: Treatment-policy estimand (10 iterations, N = 10,000)"
+#| label: tbl-sim-all
+#| tbl-cap: "Simulation results by estimand (10 iterations, N = 10,000)"
 
-sim_tp <- sim_results %>% filter(estimand == "treatment_policy")
-sim_summary_tp <- summarize_simulation(
-  sim_tp,
-  truth_rd = truth_all$treatment_policy$true_rd
+estimand_labels <- c(
+  treatment_policy   = "Treatment-policy",
+  no_switch          = "Hypothetical no-switch",
+  while_on_treatment = "While-on-treatment",
+  composite          = "Composite",
+  principal_stratum  = "Principal stratum"
 )
 
-kable(sim_summary_tp %>% select(-estimand), digits = 4, format = "pipe")
-```
+sim_summaries <- lapply(names(truth_all), function(est) {
+  if (!est %in% sim_results$estimand) return(NULL)
+  sub <- sim_results %>% filter(estimand == est)
+  s <- summarize_simulation(sub, truth_rd = truth_all[[est]]$true_rd)
+  s$estimand_label <- estimand_labels[est]
+  s
+}) %>% bind_rows()
 
-```{r}
-#| label: tbl-sim-ns
-#| tbl-cap: "Simulation results: Hypothetical no-switch estimand (10 iterations, N = 10,000)"
-
-sim_ns <- sim_results %>% filter(estimand == "no_switch")
-sim_summary_ns <- summarize_simulation(
-  sim_ns,
-  truth_rd = truth_all$no_switch$true_rd
-)
-
-kable(sim_summary_ns %>% select(-estimand), digits = 4, format = "pipe")
+kable(sim_summaries %>%
+        select(estimand_label, method, n_converged, mean_hr, mean_rd,
+               bias_rd, rmse_rd, coverage_rd) %>%
+        rename(Estimand = estimand_label, Method = method),
+      digits = 4, format = "pipe")
 ```
 
 ### Performance Plot
@@ -572,17 +639,13 @@ sim_plot_data <- sim_results %>%
       method == "LMTP SDR" ~ "Risk Difference",
       TRUE ~ "Hazard Ratio"
     ),
-    estimand_label = case_when(
-      estimand == "treatment_policy" ~ "Treatment-Policy",
-      estimand == "no_switch" ~ "Hypothetical No-Switch"
-    )
+    estimand_label = estimand_labels[estimand]
   )
 
 truth_lines <- tibble(
-  estimand_label = c("Treatment-Policy", "Hypothetical No-Switch"),
+  estimand_label = unname(estimand_labels[names(truth_all)]),
   scale = "Risk Difference",
-  xint = c(truth_all$treatment_policy$true_rd,
-           truth_all$no_switch$true_rd)
+  xint = sapply(truth_all, function(x) x$true_rd)
 )
 
 ggplot(sim_plot_data, aes(x = estimate, fill = method)) +

@@ -27,23 +27,38 @@ tau <- 180
 # Set to 1 for daily resolution in production analyses.
 BIN_WIDTH <- 30
 
-# ── 1. Ground truth (two estimands) ─────────────────────────────────────────
-# Fast (~1-2 min) -- pure DGP simulation, no LMTP.
+# ── 1. Ground truth (five estimands) ─────────────────────────────────────────
+# Fast (~3-5 min) -- pure DGP simulation, no LMTP.
 source(here("calc_truth.R"))
 
 truth_cache <- here("results", "sim_results", "ground_truth.rds")
 if (!file.exists(truth_cache)) {
-  message("=== Computing ground truth (2 x 500K subjects) ===")
-  set.seed(9999)
-  truth_tp <- truth_treatment_policy(
-    N = 500000, tau = tau, seed = 9999,
-    np_hazard = TRUE, complexity = TRUE, switch_on = TRUE
+  message("=== Computing ground truth (5 estimands x 500K subjects) ===")
+  dgp_args <- list(np_hazard = TRUE, complexity = TRUE, switch_on = TRUE)
+
+  message("  Treatment-policy...")
+  truth_tp <- do.call(truth_treatment_policy,
+    c(list(N = 500000, tau = tau, seed = 9999), dgp_args))
+  message("  No-switch...")
+  truth_ns <- do.call(truth_no_switch,
+    c(list(N = 500000, tau = tau, seed = 9999), dgp_args))
+  message("  While-on-treatment...")
+  truth_wot <- do.call(truth_while_on_treatment,
+    c(list(N = 500000, tau = tau, seed = 9999), dgp_args))
+  message("  Composite...")
+  truth_comp <- do.call(truth_composite,
+    c(list(N = 500000, tau = tau, seed = 9999), dgp_args))
+  message("  Principal stratum...")
+  truth_ps <- do.call(truth_principal_stratum,
+    c(list(N = 500000, tau = tau, seed = 9999), dgp_args))
+
+  truth_all <- list(
+    treatment_policy   = truth_tp,
+    no_switch          = truth_ns,
+    while_on_treatment = truth_wot,
+    composite          = truth_comp,
+    principal_stratum  = truth_ps
   )
-  truth_ns <- truth_no_switch(
-    N = 500000, tau = tau, seed = 9999,
-    np_hazard = TRUE, complexity = TRUE
-  )
-  truth_all <- list(treatment_policy = truth_tp, no_switch = truth_ns)
   saveRDS(truth_all, truth_cache)
   message("Saved ground truth to ", truth_cache)
 } else {
@@ -51,8 +66,14 @@ if (!file.exists(truth_cache)) {
   truth_all <- readRDS(truth_cache)
 }
 
-message("  TP RD = ", round(truth_all$treatment_policy$true_rd, 6))
-message("  NS RD = ", round(truth_all$no_switch$true_rd, 6))
+message("  TP   RD = ", round(truth_all$treatment_policy$true_rd, 6))
+message("  NS   RD = ", round(truth_all$no_switch$true_rd, 6))
+message("  WOT  RD = ", round(truth_all$while_on_treatment$true_rd, 6))
+message("  COMP RD = ", round(truth_all$composite$true_rd, 6))
+message("  PS   RD = ", round(truth_all$principal_stratum$true_rd, 6))
+if (!is.null(truth_all$principal_stratum$pct_never_switch))
+  message("  PS never-switcher %: ",
+          round(truth_all$principal_stratum$pct_never_switch * 100, 1))
 
 # ── 2. Main LMTP analysis (single dataset, N=10000) ─────────────────────────
 lmtp_cache <- here("results", "lmtp_main.rds")
@@ -161,14 +182,15 @@ if (!file.exists(support_cache)) {
 # 10 iters x 2 estimands x N=10000 with weekly bins
 sim_cache <- here("results", "sim_study_main.rds")
 if (!file.exists(sim_cache)) {
-  message("\n=== Running simulation study (10 iters x 2 estimands, N=10000) ===")
+  message("\n=== Running simulation study (10 iters x 5 estimands, N=10000) ===")
   message("    (Increase n_iter for production; 10 is for fast iteration)")
   sim_results <- run_simulation_study(
     n_iter      = 10,
     sample_size = 10000,
     tau         = tau,
     bin_width   = BIN_WIDTH,
-    estimands   = c("treatment_policy", "no_switch"),
+    estimands   = c("treatment_policy", "no_switch", "while_on_treatment",
+                    "composite", "principal_stratum"),
     run_lmtp    = TRUE,
     run_cox_td  = FALSE,
     dgp_args    = list(np_hazard = TRUE, dep_censor = TRUE,

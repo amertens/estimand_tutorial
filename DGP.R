@@ -6,7 +6,7 @@ generate_hep_data <- function(
     ## treatment assignment
     p_trt_target    = 0.36,
     ## baseline hazard parameters
-    h0              = 5e-5,
+    h0              = 5e-4,
     HR_early        = 1.25,
     HR_late         = 0.70,
     tau             = 45,          # change-point for non-PH (days)
@@ -21,7 +21,8 @@ generate_hep_data <- function(
     gamma_A         = 0.80,       # log-HR for treatment on switch
     gamma_ckd       = 0.60,       # log-HR per CKD on switch
     ## estimand policy
-    policy          = c("treatment_policy", "no_switch"),
+    policy          = c("treatment_policy", "no_switch", "while_on_treatment",
+                        "composite", "principal_stratum"),
     ## misc
     censor_base     = 1/100,      # admin censoring rate (1/days), only used when dep_censor=TRUE
     treat_override  = c("simulate", "all_treated", "all_control"),
@@ -208,18 +209,57 @@ generate_hep_data <- function(
   ##--------------------------------------------------------------------------
   ## 8. Observed follow-up & event indicator ---------------------------------
   # Under treatment_policy: switching does NOT censor. Subjects are
-  # followed until the event or administrative censoring regardless of
-  # whether they switched treatments.
+  #   followed until the event or administrative censoring regardless of
+  #   whether they switched treatments.
   # Under no_switch: switch_on is already FALSE (set above), so
-  # switch_time = Inf and has no effect.
+  #   switch_time = Inf and has no effect.
+  # Under while_on_treatment: subjects are censored at switch_time.
+  #   Only events occurring before switching contribute.
 
-  cohort$follow_time <- pmin(cohort$event_time, cohort$censor_admin)
-  cohort$event       <- as.integer(cohort$event_time <= cohort$follow_time)
+  if (policy == "while_on_treatment") {
+    # Censor at switch time
+    cohort$follow_time <- pmin(cohort$event_time, cohort$censor_admin,
+                               cohort$switch_time)
+  } else if (policy == "composite") {
+    # Composite: switching is absorbed into the outcome.
+    # follow_time = min(event_time, switch_time, censor_admin)
+    # event = 1 if either AKI or switch came first (before admin censor)
+    cohort$follow_time <- pmin(cohort$event_time, cohort$switch_time,
+                               cohort$censor_admin)
+  } else {
+    # treatment_policy, no_switch, principal_stratum:
+    # follow until event or admin censor (switching does not censor)
+    cohort$follow_time <- pmin(cohort$event_time, cohort$censor_admin)
+  }
+
+  if (policy == "composite") {
+    # Event = 1 if either the original event or switching occurred before admin censor
+    cohort$event <- as.integer(
+      cohort$follow_time < cohort$censor_admin |
+        (cohort$event_time <= cohort$censor_admin) |
+        (cohort$switch_time <= cohort$censor_admin)
+    )
+    # More precisely: event if the earliest of event/switch is <= admin censor
+    cohort$event <- as.integer(
+      pmin(cohort$event_time, cohort$switch_time) <= cohort$censor_admin
+    )
+  } else {
+    cohort$event <- as.integer(cohort$event_time <= cohort$follow_time)
+  }
 
   # Refine switched indicator: only count switching before follow-up end
   cohort$switched <- as.integer(
     cohort$switch_time < cohort$follow_time
   )
+
+  # For principal stratum: flag never-switchers.
+  # A subject is a "never-switcher" if they would not switch under EITHER
+  # treatment assignment. Since we only observe one potential switching
+  # outcome, we approximate by flagging subjects who did not switch under
+  # their observed treatment. The true principal stratum requires both
+  # potential switching indicators, which we store for truth calculations
+  # when treat_override is used.
+  cohort$would_switch <- as.integer(cohort$switch_time <= max_follow)
 
   ##--------------------------------------------------------------------------
   ## 9. Analysis dataset -----------------------------------------------------
@@ -229,7 +269,8 @@ generate_hep_data <- function(
       id, age, sex_male, race,
       ckd, diabetes, hypertension, cirrhosis, heart_failure,
       nsaid, acearb, statin,
-      treatment, event_time, switch_time, follow_time, event, switched
+      treatment, event_time, switch_time, follow_time, event, switched,
+      would_switch
     )
 
   ##--------------------------------------------------------------------------
