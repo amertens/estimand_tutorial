@@ -66,10 +66,11 @@ The simulation generates realistic patient cohorts with:
 
 The key findings are:
 
-- **Naive Cox regression** (ignoring switching) produces a hazard ratio that is a mixture of the treatment effect and the switching-induced distortion of the risk set. It does not correspond to either estimand.
-- **Cox regression censoring at switch** is biased because it removes the highest-risk patients. The drug appears safer than it is.
-- **LMTP (targeted learning)** recovers the true risk difference when the data provide adequate support for the analysis.
-- **Data support matters.** Even the correct method fails when certain patient groups almost never receive one of the treatments (a positivity violation). The tutorial includes diagnostics to detect this before trusting any estimate.
+- **The same drug produces five different answers** depending on how switching is handled. The true risk difference ranges from near zero (hypothetical no-switch, principal stratum) to +15 percentage points (composite). This demonstrates that "what is the treatment effect?" has no single answer without specifying the estimand.
+- **Cox regression is dominated by confounding bias.** Across all five estimands, unadjusted Cox models produce 0% confidence interval coverage---the truth never falls within the estimated interval. Confounding from baseline kidney disease inflates the apparent treatment effect by an order of magnitude.
+- **LMTP (targeted learning) reduces but does not eliminate bias.** It achieves 75--85% coverage for estimands with near-null true effects, but performance depends on the temporal resolution of time bins and the richness of the machine learning library.
+- **The composite LMTP fails** when the intervention definition does not match the estimand. This illustrates that even a well-designed estimator framework produces wrong answers when misspecified.
+- **Data support matters.** Even the correct method degrades when certain patient groups almost never receive one of the treatments. The tutorial includes diagnostics to detect this before trusting any estimate.
 
 ## Critical Evaluation
 
@@ -84,10 +85,12 @@ The tutorial follows the causal roadmap framework recommended in the recent meth
 Several limitations should be acknowledged:
 
 - **No real-world application.** All results are from simulated data. A real-data example would strengthen the tutorial considerably, but none is currently included.
-- **Simplified Super Learner specification.** The targeted learning analyses use only logistic regression (GLM) as the machine learning algorithm and only 2-fold cross-validation. Production analyses should use richer algorithm libraries (including penalised regression, gradient boosting, or Bayesian additive regression trees) and more cross-validation folds.
-- **Time binning.** To make the analysis computationally feasible, the 180-day follow-up period is divided into weekly bins (26 time points). This coarsening sacrifices temporal resolution and may introduce bias when treatment effects change rapidly within a week.
-- **Limited simulation iterations.** The development version uses only 10 simulation iterations. Reliable bias, variance, and coverage estimates require 200 or more.
-- **Incomplete implementation.** The hypothetical no-switch estimand's LMTP intervention function is marked as a placeholder. The sensitivity analysis for unmeasured confounding is discussed conceptually but not implemented. Competing risks (such as death before kidney failure) are not addressed.
+- **Simplified Super Learner specification.** The targeted learning analyses use logistic regression, Bayesian GLM, and an intercept-only model, with only 2-fold cross-validation. Production analyses should use richer algorithm libraries (including gradient boosting or BART) and more cross-validation folds.
+- **Time binning.** To make the analysis computationally feasible, the 180-day follow-up period is divided into biweekly bins (13 time points). This coarsening contributes to residual LMTP bias, particularly for the treatment-policy estimand where the non-proportional hazard structure changes within the first few bins.
+- **Limited simulation iterations.** The current version uses 20 simulation iterations. Reliable coverage estimates require 200 or more.
+- **LMTP residual bias.** Even with covariate adjustment, LMTP shows a systematic negative bias of approximately -0.01 to -0.03 across estimands. This likely reflects the interaction of coarse time bins with the non-proportional hazard structure and limited Super Learner flexibility.
+- **Composite LMTP misspecification.** The LMTP composite analysis is fundamentally misspecified: the intervention (static baseline treatment) does not match the composite outcome (which absorbs switching). This produces a catastrophically wrong estimate and is acknowledged as a limitation rather than a failure of LMTP per se.
+- **Incomplete implementation.** The sensitivity analysis for unmeasured confounding is discussed conceptually but not implemented. Competing risks (such as death before kidney failure) are not addressed.
 - **Uncalibrated DGP parameters.** The hepatitis B example uses plausible but not literature-calibrated incidence rates. The results are illustrative, not directly applicable to clinical practice.
 
 ### How It Could Be Improved

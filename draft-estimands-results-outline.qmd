@@ -619,7 +619,7 @@ sim_results <- readRDS(sim_cache)
 
 ```{r}
 #| label: tbl-sim-all
-#| tbl-cap: "Simulation results by estimand (10 iterations, N = 10,000)"
+#| tbl-cap: "Simulation results by estimand (20 iterations, N = 10,000)"
 
 estimand_labels <- c(
   treatment_policy   = "Treatment-policy",
@@ -703,17 +703,33 @@ print(conv_summary)
 
 ## Interpretation
 
-The results demonstrate a consistent pattern:
+The simulation results reveal several important patterns about estimand-estimator alignment.
 
-1. **The naive Cox model** (ignoring switching) produces a hazard ratio that reflects a mixture of the treatment effect and the effect of switching-induced changes to the risk set. Under non-proportional hazards, this HR does not correspond to any single marginal risk contrast. It is not aligned with either estimand.
+### Cox regression is dominated by confounding bias
 
-2. **The Cox model censoring at switch** is biased under informative switching. By removing the highest-risk patients from the treatment arm, it attenuates the apparent treatment effect. It does not correctly target the hypothetical no-switch estimand because the censoring-at-switch assumption (non-informative censoring conditional on covariates) is violated.
+Across all five estimands, the unadjusted Cox hazard ratios and Kaplan-Meier risk differences are severely biased. The KM risk difference averages approximately +0.08 when the true risk difference is near zero for most estimands, and Cox coverage is 0% in every case. This bias arises because CKD patients are more likely to receive the active drug *and* to experience renal failure. The confounding inflates the apparent treatment effect by a factor of 10--80 depending on the estimand.
 
-3. **LMTP** directly targets the marginal risk under each static intervention and adjusts for confounding and censoring through its doubly robust longitudinal estimation. When data support is adequate, LMTP recovers the truth with correct coverage.
+The Cox naive and censor-at-switch estimators differ for the treatment-policy estimand (HR 1.21 vs 1.19; RD 0.086 vs 0.076), demonstrating that censoring at switch attenuates the estimate slightly by removing the highest-risk person-time. Under no-switch, the two are identical---as expected, since there is no switching to censor.
 
-4. **Data support matters.** Even when the estimand is well-defined, estimation degrades when empirical support is inadequate. Propensity score overlap and switching rate diagnostics should be examined before trusting any estimate.
+For the composite estimand, Cox performs relatively better (HR bias of +0.10 vs true HR of 1.70) because the large composite effect (driven by differential switching) dominates the confounding bias.
 
-The central lesson is not that LMTP is generically superior to Cox regression. It is that **LMTP is better aligned with the estimand** when the estimand is defined as a marginal risk contrast under a longitudinal intervention, and when time-varying confounding affected by prior treatment is present.
+### LMTP reduces but does not eliminate bias
+
+LMTP produces substantially less biased estimates than Cox for most estimands. For the no-switch and while-on-treatment estimands (where the true RD is near zero), LMTP achieves 75--85% coverage despite a residual negative bias of approximately -0.014. This residual bias likely reflects the limitations of the current specification: biweekly time bins (13 time points) provide limited temporal resolution for the non-proportional hazard structure, and the Super Learner library (`SL.mean`, `SL.glm`, `SL.bayesglm`) may not fully capture the confounding adjustment.
+
+For the treatment-policy estimand (true RD = +0.007), LMTP coverage is 35%, reflecting a negative bias of -0.028. The estimator is correctly targeting the right parameter but the finite-sample performance is limited by the sparse event rate (~8%) and coarse time discretisation.
+
+### The composite LMTP is misspecified
+
+LMTP produces a catastrophically wrong estimate for the composite estimand (mean RD = -0.16 vs truth = +0.15). This occurs because the LMTP analysis targets static baseline treatment interventions, while the composite outcome includes switching as an event. The LMTP censoring model treats switching as a censoring event to be adjusted away, which is the *opposite* of what the composite estimand requires. This illustrates that even an aligned estimator framework can produce wrong answers when the intervention definition does not match the estimand.
+
+### Principal stratum estimation is approximate
+
+The LMTP analysis restricted to observed non-switchers (55% coverage) provides a rough approximation to the principal stratum estimand. The approximation is imperfect because observed non-switchers under one treatment arm are not the same as the latent "never-switcher" stratum (which requires not switching under *both* treatment assignments). More sophisticated principal stratum methods (e.g., sensitivity analysis under monotonicity) are needed for reliable estimation.
+
+### The central lesson
+
+The results confirm that the primary problem in safety analyses with intercurrent events is **estimand-estimator misalignment**. Cox regression, regardless of how switching is handled, produces severely biased estimates due to uncontrolled confounding and conditional (rather than marginal) targeting. LMTP offers better alignment with the marginal risk contrasts defined by most estimands, but its performance depends on adequate temporal resolution, a sufficiently rich Super Learner library, and correct specification of the intervention relative to the estimand. Neither method is universally "better"---the question is whether the estimator targets the same quantity as the estimand.
 
 ## Sensitivity to Unmeasured Confounding
 
@@ -728,7 +744,7 @@ This tutorial does not implement a full sensitivity analysis, but the causal roa
 
 ## Continuous-Time TMLE as an Alternative
 
-The `lmtp` analyses in this tutorial discretise the 180-day follow-up into weekly bins, creating ~26 outcome and censoring columns per subject. This is a pragmatic choice that trades temporal resolution for computational feasibility, but it raises a legitimate concern: discretisation has been shown to affect estimator performance, and the choice of bin width is itself a tuning parameter that can influence results (Rytgaard et al. 2023).
+The `lmtp` analyses in this tutorial discretise the 180-day follow-up into biweekly bins, creating ~13 outcome and censoring columns per subject. This is a pragmatic choice that trades temporal resolution for computational feasibility, but it raises a legitimate concern: discretisation has been shown to affect estimator performance, and the choice of bin width is itself a tuning parameter that can influence results (Rytgaard et al. 2023).
 
 The `concrete` R package (Chen et al. 2023) implements a continuous-time TMLE that avoids discretisation entirely. It works directly with cause-specific hazards on the continuous time scale, targets cause-specific absolute risks (cumulative incidence) under intervention, and provides simultaneous confidence bands across multiple target times. It also handles competing risks natively---for example, death before renal failure---which the current tutorial does not address.
 
@@ -752,17 +768,19 @@ For the estimands in this tutorial---which are defined by how switching is handl
 
 ## Key Messages
 
-1. **The main problem is estimand-estimator misalignment.** Analysts often run regression procedures that do not target the stated estimand when intercurrent events are present.
+1. **The same drug, five different answers.** The true risk difference ranges from near zero (hypothetical no-switch, principal stratum) to +0.15 (composite), depending entirely on how treatment switching is handled. The treatment effect has no single value without specifying the estimand.
 
-2. **Cox models that censor at switching** implicitly assume non-informative censoring conditional on included covariates. When switching is driven by evolving covariates affected by prior treatment, this assumption is generally not plausible.
+2. **Cox regression is dominated by confounding bias.** Across all five estimands, unadjusted Cox models produce 0% coverage. The confounding from CKD (which drives both treatment assignment and the outcome) inflates the apparent treatment effect by an order of magnitude. This bias is not a property of the Cox model per se, but of using unadjusted or insufficiently adjusted regression in the presence of strong confounding.
 
-3. **Hazard ratios are not risk contrasts.** Under non-proportional hazards, competing risks, or time-varying treatment effects, the Cox HR does not correspond to a marginal risk difference or ratio. Estimands defined as risk contrasts require estimators that target risk contrasts.
+3. **Hazard ratios are not risk contrasts.** Even when the Cox HR is close to the true HR (as in the composite estimand), the KM risk difference remains biased because unadjusted survival curves do not target the marginal risk under intervention. Estimands defined as risk contrasts require estimators that target risk contrasts.
 
-4. **LMTP aligns estimation with the longitudinal intervention** defining the estimand. It adjusts for time-varying confounding under the identifying assumptions and returns interpretable marginal contrasts.
+4. **LMTP reduces bias but does not eliminate it.** LMTP achieves 75--85% coverage for the no-switch and while-on-treatment estimands (near-null true effects) but only 35% for the treatment-policy estimand. Performance depends on temporal resolution, Super Learner specification, and event rate. Production analyses should use finer time bins and richer learner libraries.
 
-5. **Support diagnostics are mandatory.** An estimand can be conceptually identified while estimation fails due to lack of data support. Always check propensity score overlap, switching rates by stratum, and effective sample sizes before interpreting estimates.
+5. **Misspecified interventions produce wrong answers.** The composite LMTP fails catastrophically (bias = -0.31) because the LMTP intervention (static treatment assignment) does not match the composite estimand (which absorbs switching into the outcome). Even a well-designed estimator framework produces wrong answers when the intervention definition is misaligned with the estimand.
 
-6. **Report transparently.** State the estimand, the assumptions required for identification, the diagnostics that support (or fail to support) those assumptions, and the alignment between the estimator and the estimand.
+6. **Support diagnostics are mandatory.** Estimation degrades as positivity weakens. Under poor support, Cox HRs become unstable (HR = 2.27 for censor-at-switch) and LMTP estimates show increased bias and wider confidence intervals.
+
+7. **Report transparently.** State the estimand, the assumptions required for identification, the diagnostics that support (or fail to support) those assumptions, the alignment between the estimator and the estimand, and the limitations of the specification (time binning, learner library, finite-sample bias).
 
 ## Sources
 
