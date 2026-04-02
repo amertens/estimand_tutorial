@@ -4,9 +4,31 @@
 # true 180-day risks, risk differences, and risk ratios.
 
 library(dplyr)
+library(survival)
 library(here)
 
 source(here("DGP.R"))
+
+# ── Helper: compute marginal HR from two counterfactual datasets ─────────────
+#' Stack all-treated and all-control datasets, fit unadjusted Cox,
+#' and extract the marginal HR. This is the "true" HR under each estimand
+#' for comparing against Cox estimates from observed data.
+#' @param df_a1 data.frame; all-treated counterfactual.
+#' @param df_a0 data.frame; all-control counterfactual.
+#' @param tau numeric; follow-up horizon.
+#' @return numeric; marginal hazard ratio.
+compute_true_hr <- function(df_a1, df_a0, tau) {
+  df_a1$trt <- 1L
+  df_a0$trt <- 0L
+  combined <- bind_rows(
+    df_a1 %>% mutate(time_use = pmin(follow_time, tau),
+                     event_use = as.integer(event == 1 & follow_time <= tau)),
+    df_a0 %>% mutate(time_use = pmin(follow_time, tau),
+                     event_use = as.integer(event == 1 & follow_time <= tau))
+  )
+  fit <- coxph(Surv(time_use, event_use) ~ trt, data = combined)
+  as.numeric(exp(coef(fit)["trt"]))
+}
 
 # ── Truth: Treatment-Policy Estimand ─────────────────────────────────────────
 #' Compute true risks under the treatment-policy estimand.
@@ -37,6 +59,7 @@ truth_treatment_policy <- function(N = 500000, tau = 180, seed = 9999, ...) {
 
   risk_1 <- mean(df_a1$event == 1 & df_a1$follow_time <= tau)
   risk_0 <- mean(df_a0$event == 1 & df_a0$follow_time <= tau)
+  true_hr <- compute_true_hr(df_a1, df_a0, tau)
 
   list(
     estimand    = "treatment_policy",
@@ -44,6 +67,7 @@ truth_treatment_policy <- function(N = 500000, tau = 180, seed = 9999, ...) {
     true_risk_0 = risk_0,
     true_rd     = risk_1 - risk_0,
     true_rr     = risk_1 / risk_0,
+    true_hr     = true_hr,
     N           = N,
     tau         = tau
   )
@@ -78,6 +102,7 @@ truth_no_switch <- function(N = 500000, tau = 180, seed = 9999, ...) {
 
   risk_1 <- mean(df_a1$event == 1 & df_a1$follow_time <= tau)
   risk_0 <- mean(df_a0$event == 1 & df_a0$follow_time <= tau)
+  true_hr <- compute_true_hr(df_a1, df_a0, tau)
 
   list(
     estimand    = "no_switch",
@@ -85,6 +110,7 @@ truth_no_switch <- function(N = 500000, tau = 180, seed = 9999, ...) {
     true_risk_0 = risk_0,
     true_rd     = risk_1 - risk_0,
     true_rr     = risk_1 / risk_0,
+    true_hr     = true_hr,
     N           = N,
     tau         = tau
   )
@@ -133,6 +159,7 @@ truth_while_on_treatment <- function(N = 500000, tau = 180, seed = 9999, ...) {
 
   risk_1 <- mean(df_a1$event == 1 & df_a1$follow_time <= tau)
   risk_0 <- mean(df_a0$event == 1 & df_a0$follow_time <= tau)
+  true_hr <- compute_true_hr(df_a1, df_a0, tau)
 
   list(
     estimand    = "while_on_treatment",
@@ -140,6 +167,7 @@ truth_while_on_treatment <- function(N = 500000, tau = 180, seed = 9999, ...) {
     true_risk_0 = risk_0,
     true_rd     = risk_1 - risk_0,
     true_rr     = risk_1 / risk_0,
+    true_hr     = true_hr,
     N           = N,
     tau         = tau
   )
@@ -175,6 +203,7 @@ truth_composite <- function(N = 500000, tau = 180, seed = 9999, ...) {
 
   risk_1 <- mean(df_a1$event == 1 & df_a1$follow_time <= tau)
   risk_0 <- mean(df_a0$event == 1 & df_a0$follow_time <= tau)
+  true_hr <- compute_true_hr(df_a1, df_a0, tau)
 
   list(
     estimand    = "composite",
@@ -182,6 +211,7 @@ truth_composite <- function(N = 500000, tau = 180, seed = 9999, ...) {
     true_risk_0 = risk_0,
     true_rd     = risk_1 - risk_0,
     true_rr     = risk_1 / risk_0,
+    true_hr     = true_hr,
     N           = N,
     tau         = tau
   )
@@ -232,6 +262,7 @@ truth_principal_stratum <- function(N = 500000, tau = 180, seed = 9999, ...) {
                    df_a1$follow_time[never_switcher] <= tau)
   risk_0 <- mean(df_a0$event[never_switcher] == 1 &
                    df_a0$follow_time[never_switcher] <= tau)
+  true_hr <- compute_true_hr(df_a1[never_switcher, ], df_a0[never_switcher, ], tau)
 
   list(
     estimand      = "principal_stratum",
@@ -239,6 +270,7 @@ truth_principal_stratum <- function(N = 500000, tau = 180, seed = 9999, ...) {
     true_risk_0   = risk_0,
     true_rd       = risk_1 - risk_0,
     true_rr       = risk_1 / risk_0,
+    true_hr       = true_hr,
     n_never_switch = sum(never_switcher),
     pct_never_switch = mean(never_switcher),
     N             = N,

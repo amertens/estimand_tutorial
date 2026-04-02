@@ -56,28 +56,30 @@ run_one_iter <- function(i, estimand = "treatment_policy",
   results[["cox_naive"]] <- tryCatch({
     fit <- fit_cox_naive(dat, tau = tau, covars = covars)
     km  <- km_risk_at(fit$survfit, t = tau)
+    km_rr <- if (km$risk_ctrl > 0) km$risk_trt / km$risk_ctrl else NA_real_
     data.frame(
       method = "Cox naive", hr = fit$hr,
       ci_low = fit$ci_low, ci_high = fit$ci_high,
-      risk_diff = km$risk_diff, converged = TRUE
+      risk_diff = km$risk_diff, risk_ratio = km_rr, converged = TRUE
     )
   }, error = function(e) {
     data.frame(method = "Cox naive", hr = NA, ci_low = NA, ci_high = NA,
-               risk_diff = NA, converged = FALSE)
+               risk_diff = NA, risk_ratio = NA, converged = FALSE)
   })
 
   # ── B. Cox censor at switch ──
   results[["cox_censor"]] <- tryCatch({
     fit <- fit_cox_censor_switch(dat, tau = tau, covars = covars)
     km  <- km_risk_at(fit$survfit, t = tau)
+    km_rr <- if (km$risk_ctrl > 0) km$risk_trt / km$risk_ctrl else NA_real_
     data.frame(
       method = "Cox censor-at-switch", hr = fit$hr,
       ci_low = fit$ci_low, ci_high = fit$ci_high,
-      risk_diff = km$risk_diff, converged = TRUE
+      risk_diff = km$risk_diff, risk_ratio = km_rr, converged = TRUE
     )
   }, error = function(e) {
     data.frame(method = "Cox censor-at-switch", hr = NA, ci_low = NA,
-               ci_high = NA, risk_diff = NA, converged = FALSE)
+               ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
   })
 
   # ── C. Cox time-dependent treatment (optional) ──
@@ -87,11 +89,11 @@ run_one_iter <- function(i, estimand = "treatment_policy",
       data.frame(
         method = "Cox time-dependent", hr = fit$hr,
         ci_low = fit$ci_low, ci_high = fit$ci_high,
-        risk_diff = NA_real_, converged = TRUE
+        risk_diff = NA_real_, risk_ratio = NA_real_, converged = TRUE
       )
     }, error = function(e) {
       data.frame(method = "Cox time-dependent", hr = NA, ci_low = NA,
-                 ci_high = NA, risk_diff = NA, converged = FALSE)
+                 ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
     })
   }
 
@@ -104,14 +106,15 @@ run_one_iter <- function(i, estimand = "treatment_policy",
       rd_est <- res$contrast_rd$vals$theta
       rd_se  <- res$contrast_rd$vals$std.error
       rd_ci  <- rd_est + c(-1, 1) * 1.96 * rd_se
+      rr_est <- res$contrast_rr$vals$theta
       data.frame(
         method = "LMTP SDR", hr = NA_real_,
         ci_low = rd_ci[1], ci_high = rd_ci[2],
-        risk_diff = rd_est, converged = TRUE
+        risk_diff = rd_est, risk_ratio = rr_est, converged = TRUE
       )
     }, error = function(e) {
       data.frame(method = "LMTP SDR", hr = NA, ci_low = NA,
-                 ci_high = NA, risk_diff = NA, converged = FALSE)
+                 ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
     })
   }
 
@@ -233,7 +236,8 @@ run_support_scenarios <- function(estimand = "treatment_policy",
 #' @param truth_rd numeric; true risk difference (for LMTP and KM-based RD).
 #' @param truth_hr numeric; true hazard ratio (for Cox, if known).
 #' @return tibble with summary statistics grouped by estimand and method.
-summarize_simulation <- function(sim_results, truth_rd = NA, truth_hr = NA) {
+summarize_simulation <- function(sim_results, truth_rd = NA, truth_rr = NA,
+                                 truth_hr = NA) {
   sim_results %>%
     group_by(estimand, method) %>%
     summarise(
@@ -255,6 +259,10 @@ summarize_simulation <- function(sim_results, truth_rd = NA, truth_hr = NA) {
       coverage_rd  = if (!is.na(truth_rd))
                        mean(ci_low <= truth_rd & ci_high >= truth_rd,
                             na.rm = TRUE)
+                     else NA_real_,
+      # RR summaries
+      mean_rr      = mean(risk_ratio, na.rm = TRUE),
+      bias_rr      = if (!is.na(truth_rr)) mean(risk_ratio, na.rm = TRUE) - truth_rr
                      else NA_real_,
       .groups = "drop"
     )

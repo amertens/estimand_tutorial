@@ -467,12 +467,36 @@ truth_summary <- tibble::tibble(
                     truth_all$no_switch$true_rr,
                     truth_all$while_on_treatment$true_rr,
                     truth_all$composite$true_rr,
-                    truth_all$principal_stratum$true_rr)
+                    truth_all$principal_stratum$true_rr),
+  `True HR` = c(truth_all$treatment_policy$true_hr,
+                truth_all$no_switch$true_hr,
+                truth_all$while_on_treatment$true_hr,
+                truth_all$composite$true_hr,
+                truth_all$principal_stratum$true_hr)
 )
 
 kable(truth_summary, digits = 5, format = "pipe",
-      caption = "True 180-day risks by estimand (Monte Carlo, N = 500,000)")
+      caption = "True 180-day risks and hazard ratios by estimand (Monte Carlo, N = 500,000)")
 ```
+
+### What Drives the Differences Across Estimands
+
+The table above demonstrates a fundamental point: **the treatment effect has no single value without specifying the estimand**. The risk difference ranges from near zero to over 14 percentage points depending on how treatment switching is handled. This is not a statistical artifact---it reflects genuinely different causal questions about the same drug.
+
+**Treatment-policy (RD > 0, moderate).** Under this estimand, the active drug increases risk because patients are followed regardless of switching. During the early period (before day 45 in the DGP), the active drug has HR = 1.25, causing excess harm. Some patients switch to the comparator, which reduces their subsequent hazard, but the early harm has already occurred. The treatment-policy RD captures the net real-world consequence of initiating the active drug: early harm partially offset by switching.
+
+**Hypothetical no-switch (RD $\approx$ 0).** In a world where nobody switches, the early harm from the active drug (HR = 1.25 before day 45) is approximately offset by the late protective effect (HR = 0.70 after day 45). Over 180 days, these roughly cancel out. This estimand isolates the direct pharmacological effect of sustained treatment and is near null because the non-proportional hazard structure produces a time-averaged effect close to zero.
+
+**While-on-treatment (RD $\approx$ 0).** The while-on-treatment truth equals the no-switch truth because, under counterfactual all-treated or all-control conditions, nobody switches (everyone is on the same drug). In observed data, however, the while-on-treatment estimand differs from the hypothetical because it conditions on not switching rather than intervening to prevent it---a distinction that matters when switching is informative.
+
+**Composite (RD >> 0, largest).** The composite estimand absorbs switching into the outcome. Because the active drug causes more switching (driven by `gamma_A = 0.80`), the composite event rate is substantially higher in the active arm. This large risk difference is driven primarily by differential switching rates, not by differential renal failure rates. The composite estimand conflates drug tolerability with drug safety---a clinically important distinction that is lost when switching is treated as part of the outcome.
+
+**Principal stratum (RD $\approx$ 0, smallest).** Among never-switchers---the approximately 19% of patients who would not switch under either treatment---the risk difference is near zero. Never-switchers tend to be lower-risk patients (without CKD) for whom the drug's effect is minimal. This estimand targets a highly selected, latent subpopulation that may not be representative of the patients clinicians are most concerned about.
+
+::: {.callout-note}
+## The same drug, five different answers
+The active drug is genuinely riskier in the short term (HR = 1.25 early) and genuinely protective in the longer term (HR = 0.70 late). Whether the overall effect appears harmful, null, or protective depends entirely on which estimand is chosen---and each estimand answers a different clinical question. This is not a flaw of the framework; it is the framework working as intended. The flaw arises when analysts report a treatment effect without specifying which estimand they are targeting.
+:::
 
 ## Data Support Diagnostics {#sec-support}
 
@@ -608,14 +632,18 @@ estimand_labels <- c(
 sim_summaries <- lapply(names(truth_all), function(est) {
   if (!est %in% sim_results$estimand) return(NULL)
   sub <- sim_results %>% filter(estimand == est)
-  s <- summarize_simulation(sub, truth_rd = truth_all[[est]]$true_rd)
+  s <- summarize_simulation(sub,
+         truth_rd = truth_all[[est]]$true_rd,
+         truth_rr = truth_all[[est]]$true_rr,
+         truth_hr = truth_all[[est]]$true_hr)
   s$estimand_label <- estimand_labels[est]
   s
 }) %>% bind_rows()
 
 kable(sim_summaries %>%
-        select(estimand_label, method, n_converged, mean_hr, mean_rd,
-               bias_rd, rmse_rd, coverage_rd) %>%
+        select(estimand_label, method, n_converged,
+               mean_hr, bias_hr, mean_rd, bias_rd,
+               mean_rr, bias_rr, coverage_rd) %>%
         rename(Estimand = estimand_label, Method = method),
       digits = 4, format = "pipe")
 ```
