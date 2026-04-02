@@ -32,7 +32,8 @@ source(here("R", "helpers.R"))
 #' @return data.frame with one row per method.
 run_one_iter <- function(i, estimand = "treatment_policy",
                          sample_size = 1000, tau = 180,
-                         bin_width = 7,
+                         bin_width = 30,
+                         lmtp_learners = c("SL.mean", "SL.glmnet", "SL.bayesglm"),
                          run_lmtp = TRUE, run_cox_td = FALSE,
                          dgp_args = list()) {
   set.seed(1000 + i)
@@ -99,7 +100,7 @@ run_one_iter <- function(i, estimand = "treatment_policy",
     results[["lmtp"]] <- tryCatch({
       requireNamespace("lmtp", quietly = TRUE)
       prep <- prepare_lmtp_data(dat, tau = tau, bin_width = bin_width)
-      res  <- run_lmtp_analysis(prep, folds = 2, learners = c("SL.glm"))
+      res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
       rd_est <- res$contrast_rd$vals$theta
       rd_se  <- res$contrast_rd$vals$std.error
       rd_ci  <- rd_est + c(-1, 1) * 1.96 * rd_se
@@ -134,7 +135,8 @@ run_one_iter <- function(i, estimand = "treatment_policy",
 #' @param cache_file character or NULL; path to cache results.
 #' @return data.frame of aggregated results.
 run_simulation_study <- function(n_iter = 200, sample_size = 1000,
-                                 tau = 180, bin_width = 7,
+                                 tau = 180, bin_width = 30,
+                                 lmtp_learners = c("SL.mean", "SL.glmnet", "SL.bayesglm"),
                                  estimands = c("treatment_policy", "no_switch"),
                                  run_lmtp = TRUE, run_cox_td = FALSE,
                                  dgp_args = list(),
@@ -157,6 +159,7 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
       iter_res <- run_one_iter(
         i, estimand = est, sample_size = sample_size,
         tau = tau, bin_width = bin_width,
+        lmtp_learners = lmtp_learners,
         run_lmtp = run_lmtp, run_cox_td = run_cox_td,
         dgp_args = dgp_args
       )

@@ -316,7 +316,7 @@ The `lmtp` package implements longitudinal modified treatment policies via the s
 #| cache: true
 #| message: false
 lmtp_prep <- prepare_lmtp_data(
-  dat, tau = tau, bin_width = 7,
+  dat, tau = tau, bin_width = 30,
   baseline = c("age", "sex_male", "ckd", "diabetes", "hypertension",
                "heart_failure")
 )

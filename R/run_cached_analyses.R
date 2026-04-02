@@ -25,7 +25,7 @@ dir.create(here("results", "sim_results"), showWarnings = FALSE, recursive = TRU
 tau <- 180
 # Weekly bins: ~26 time points instead of 180. Major speedup for LMTP.
 # Set to 1 for daily resolution in production analyses.
-BIN_WIDTH <- 7
+BIN_WIDTH <- 30
 
 # ── 1. Ground truth (two estimands) ─────────────────────────────────────────
 # Fast (~1-2 min) -- pure DGP simulation, no LMTP.
@@ -60,6 +60,10 @@ if (!file.exists(lmtp_cache)) {
   message("\n=== Running main LMTP analysis (N=10000, bin_width=", BIN_WIDTH, ") ===")
   requireNamespace("lmtp", quietly = TRUE)
   requireNamespace("SuperLearner", quietly = TRUE)
+  requireNamespace("glmnet", quietly = TRUE)
+  requireNamespace("arm", quietly = TRUE)
+
+  SL_LIBRARY <- c("SL.mean", "SL.glmnet", "SL.bayesglm")
 
   set.seed(2026)
   dat <- generate_hep_data(
@@ -76,9 +80,10 @@ if (!file.exists(lmtp_cache)) {
                  "hypertension", "heart_failure")
   )
   message("  LMTP columns: ", lmtp_prep$n_bins, " time bins")
+  message("  SL library: ", paste(SL_LIBRARY, collapse = ", "))
 
   lmtp_res <- run_lmtp_analysis(lmtp_prep, folds = 2,
-                                learners = c("SL.glm"))
+                                learners = SL_LIBRARY)
   saveRDS(lmtp_res, lmtp_cache)
   message("Saved LMTP results to ", lmtp_cache)
 } else {
@@ -132,7 +137,8 @@ if (!file.exists(support_cache)) {
     )
     lmtp_rd <- tryCatch({
       prep <- prepare_lmtp_data(d, tau = tau, bin_width = BIN_WIDTH)
-      res <- run_lmtp_analysis(prep, folds = 2)
+      res <- run_lmtp_analysis(prep, folds = 2,
+                               learners = c("SL.mean", "SL.glmnet", "SL.bayesglm"))
       res$contrast_rd$estimates$estimate
     }, error = function(e) NA_real_)
 
