@@ -210,17 +210,16 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
           library(dplyr)
           library(survival)
           library(here)
+          library(lmtp)
+          library(SuperLearner)
+          library(arm)
         })
         source(here("DGP.R"))
         source(here("R", "helpers.R"))
       })
 
-      # Export the iteration function and parameters
-      clusterExport(cl, c("run_one_iter", "fit_cox_naive",
-                          "fit_cox_censor_switch", "fit_cox_td",
-                          "prepare_lmtp_data", "run_lmtp_analysis",
-                          "km_risk_at", "generate_hep_data"),
-                    envir = environment())
+      # Export run_one_iter (defined in this file, not in helpers.R)
+      clusterExport(cl, "run_one_iter", envir = environment())
 
       iter_results <- parLapply(cl, seq_len(n_iter), function(i) {
         run_one_iter(
