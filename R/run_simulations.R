@@ -103,10 +103,16 @@ run_one_iter <- function(i, estimand = "treatment_policy",
       requireNamespace("lmtp", quietly = TRUE)
       prep <- prepare_lmtp_data(dat, tau = tau, bin_width = bin_width)
       res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
-      rd_est <- res$contrast_rd$vals$theta
-      rd_se  <- res$contrast_rd$vals$std.error
+      # Handle both old ($vals$theta) and new ($estimates$estimate) lmtp API
+      rd_obj <- res$contrast_rd
+      rd_est <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$estimate
+                else rd_obj$vals$theta
+      rd_se  <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$std.error
+                else rd_obj$vals$std.error
       rd_ci  <- rd_est + c(-1, 1) * 1.96 * rd_se
-      rr_est <- res$contrast_rr$vals$theta
+      rr_obj <- res$contrast_rr
+      rr_est <- if (!is.null(rr_obj$estimates)) rr_obj$estimates$estimate
+                else rr_obj$vals$theta
       data.frame(
         method = "LMTP SDR", hr = NA_real_,
         ci_low = rd_ci[1], ci_high = rd_ci[2],
