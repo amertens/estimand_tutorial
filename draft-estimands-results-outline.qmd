@@ -80,9 +80,9 @@ The simulation draws on concerns about nephrotoxicity in tenofovir-containing he
 
 ### Data-generating process
 
-The function `generate_hep_data()` produces cohorts with confounded treatment assignment, a piecewise-exponential event process with non-proportional hazards (HR = 1.25 before day 45; HR = 0.70 after), and informative switching driven by treatment and CKD. When a patient switches, the post-switch event hazard changes to reflect the new treatment---that is, switching has a direct effect on the outcome process. Administrative censoring may depend on baseline risk when `dep_censor = TRUE`.
+The function `generate_hep_data()` produces cohorts with confounded treatment assignment, a piecewise-exponential event process with non-proportional hazards (HR = 1.30 before day 90; HR = 1.05 after), and informative switching driven by treatment and CKD. The non-proportional structure reflects the clinical pattern reported in the hepatitis B nephrotoxicity literature: TDF increases early renal risk, which attenuates but does not reverse over longer follow-up. When a patient switches, the post-switch event hazard changes to reflect the new treatment. Administrative censoring may depend on baseline risk when `dep_censor = TRUE`.
 
-The DGP supports several follow-up policies. Under `"treatment_policy"`, switching occurs and modifies the hazard, but does not censor follow-up. Under `"no_switch"`, switching is suppressed entirely. Under `"while_on_treatment"`, follow-up is censored at the switch time.
+One dataset, generated under the treatment-policy regime (switching occurs, modifies the hazard, does not censor), supports all five estimand analyses. The raw timing variables---`event_time`, `switch_time`, `censor_admin`---are retained, and the helper function `derive_estimand()` redefines `follow_time` and `event` for each strategy. For the no-switch truth, a separate dataset is generated with switching suppressed entirely (`switch_on = FALSE`).
 
 ```{r}
 #| label: generate-data
@@ -93,7 +93,6 @@ dat <- generate_hep_data(
   np_hazard   = TRUE,
   dep_censor  = TRUE,
   complexity  = TRUE,
-  policy      = "treatment_policy",
   seed        = 2026
 )
 ```
@@ -186,9 +185,9 @@ truth_summary <- tibble::tibble(
 kable(truth_summary, digits = 4, format = "pipe")
 ```
 
-The treatment-policy risk difference is positive: the active drug causes early harm (HR = 1.25 before day 45), and although switching to the comparator reduces the subsequent hazard, the accumulated early risk is not fully offset. Under the no-switch strategy, where patients remain on their assigned treatment for the full 180 days, the early harm and late protective effect (HR = 0.70 after day 45) approximately cancel. The composite strategy produces a much larger risk difference because the active arm experiences substantially more switching, and switching itself counts as an event. The principal stratum restricts to the approximately 19% of patients who would not switch under either treatment; this low-risk subgroup shows a near-null treatment effect.
+The treatment-policy risk difference is positive: the active drug causes early harm (HR = 1.30 before day 90), and although switching to the comparator reduces the subsequent hazard, the accumulated early risk is not fully offset. Under the no-switch strategy, where patients remain on their assigned treatment for the full 180 days, the risk difference reflects the full non-proportional hazard structure (HR = 1.30 early, HR = 1.05 late) without the attenuating effect of switching. The composite strategy produces the largest risk difference because the active arm experiences substantially more switching, and switching itself counts as an event.
 
-The while-on-treatment truth is numerically identical to the no-switch truth in this design. Under counterfactual uniform treatment (all-treated or all-control), no switching occurs, so censoring at switch has no effect. In observed data where both treatments are assigned, the two estimands would differ: while-on-treatment conditions on not having switched, whereas the hypothetical intervenes to prevent switching.
+The while-on-treatment truth differs from the no-switch truth because it conditions on not switching before 180 days. Under counterfactual uniform treatment (all-treated or all-control), non-switchers are a selected subpopulation whose switching hazard exceeded 180 days---a subset that tends to be lower-risk. The principal stratum further restricts to patients who would not switch under *either* treatment assignment; this latent subgroup shows a near-null effect.
 
 ## Estimand Framework
 
@@ -297,16 +296,16 @@ Positivity requires that the probability of receiving each treatment remains bou
 set.seed(101)
 dat_good <- generate_hep_data(
   N = 5000, np_hazard = TRUE, dep_censor = TRUE,
-  complexity = TRUE, policy = "treatment_policy", seed = 101)
+  complexity = TRUE, seed = 101)
 set.seed(102)
 dat_strained <- generate_hep_data(
   N = 5000, np_hazard = TRUE, dep_censor = TRUE,
-  complexity = TRUE, policy = "treatment_policy",
+  complexity = TRUE,
   gamma_A = 1.5, gamma_ckd = 1.2, lambda_sw0 = 5e-3, seed = 102)
 set.seed(103)
 dat_poor <- generate_hep_data(
   N = 5000, np_hazard = TRUE, dep_censor = TRUE,
-  complexity = TRUE, policy = "treatment_policy",
+  complexity = TRUE,
   gamma_A = 2.5, gamma_ckd = 2.0, lambda_sw0 = 1e-2, seed = 103)
 ```
 

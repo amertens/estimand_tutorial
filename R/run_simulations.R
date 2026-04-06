@@ -50,12 +50,28 @@ run_one_iter <- function(i, estimand = "treatment_policy",
                          dgp_args = list()) {
   set.seed(1000 + i)
 
-  # Generate data under the appropriate policy
-  args <- modifyList(
-    list(N = sample_size, policy = estimand, seed = 1000 + i),
-    dgp_args
-  )
-  dat <- do.call(generate_hep_data, args)
+  # Generate ONE dataset under treatment-policy (switching occurs, does not censor).
+  # Derive estimand-specific outcomes via derive_estimand().
+  # For no_switch: generate separately with switch_on=FALSE.
+  if (estimand == "no_switch") {
+    args <- modifyList(
+      list(N = sample_size, switch_on = FALSE, seed = 1000 + i),
+      dgp_args
+    )
+  } else {
+    args <- modifyList(
+      list(N = sample_size, switch_on = TRUE, seed = 1000 + i),
+      dgp_args
+    )
+  }
+  dat_raw <- do.call(generate_hep_data, args)
+
+  # Apply estimand-specific outcome/censoring definition
+  if (estimand %in% c("while_on_treatment", "composite")) {
+    dat <- derive_estimand(dat_raw, estimand)
+  } else {
+    dat <- dat_raw  # treatment_policy, no_switch, principal_stratum
+  }
 
   covars <- intersect(
     c("age", "ckd", "cirrhosis", "diabetes", "heart_failure"),

@@ -88,7 +88,7 @@ if (!file.exists(lmtp_cache)) {
   set.seed(2026)
   dat <- generate_hep_data(
     N = 10000, np_hazard = TRUE, dep_censor = TRUE,
-    complexity = TRUE, policy = "treatment_policy", seed = 2026
+    complexity = TRUE, seed = 2026
   )
 
   message("  Event rate: ", round(mean(dat$event), 4))
@@ -121,18 +121,18 @@ if (!file.exists(support_cache)) {
   set.seed(101)
   dat_good <- generate_hep_data(
     N = 5000, np_hazard = TRUE, dep_censor = TRUE,
-    complexity = TRUE, policy = "treatment_policy", seed = 101
+    complexity = TRUE, seed = 101
   )
   set.seed(102)
   dat_strained <- generate_hep_data(
     N = 5000, np_hazard = TRUE, dep_censor = TRUE,
-    complexity = TRUE, policy = "treatment_policy",
+    complexity = TRUE,
     gamma_A = 1.5, gamma_ckd = 1.2, lambda_sw0 = 5e-3, seed = 102
   )
   set.seed(103)
   dat_poor <- generate_hep_data(
     N = 5000, np_hazard = TRUE, dep_censor = TRUE,
-    complexity = TRUE, policy = "treatment_policy",
+    complexity = TRUE,
     gamma_A = 2.5, gamma_ckd = 2.0, lambda_sw0 = 1e-2, seed = 103
   )
 

@@ -1,24 +1,14 @@
 # calc_truth.R
-# Compute Monte Carlo ground truth under each DGP policy.
+# Compute Monte Carlo ground truth under each estimand strategy.
 #
 # Each truth function generates large counterfactual datasets (all-treated
-# and all-control) under a specific DGP policy and computes 180-day marginal
-# risks, risk differences, risk ratios, and marginal HRs.
+# and all-control) and computes 180-day marginal risks, RD, RR, and HR.
 #
-# Important notes on interpretation:
-# - treatment_policy: switching occurs and modifies the hazard, but does not
-#   censor. Truth reflects outcomes under natural switching behaviour.
-# - no_switch: switching is suppressed entirely. Truth reflects potential
-#   outcomes under sustained treatment.
-# - while_on_treatment: uses policy="no_switch" as a shortcut. Under uniform
-#   counterfactual treatment (all-treated or all-control), nobody switches,
-#   so the numerical truth is identical to no_switch. This does NOT exercise
-#   the censoring-at-switch mechanism; the truth should not be interpreted as
-#   a full validation of while-on-treatment estimators.
-# - composite: event = AKI or switching. Under counterfactual uniform treatment,
-#   switching still occurs (driven by treatment-dependent hazard).
-# - principal_stratum: restricts to subjects who would not switch under either
-#   treatment assignment. Requires generating both potential switching outcomes.
+# The DGP always generates under treatment-policy (switching occurs and
+# modifies the hazard). Estimand-specific outcomes are derived from the
+# raw timing variables using derive_estimand().
+#
+# For the no-switch truth, switching is suppressed entirely (switch_on=FALSE).
 
 library(dplyr)
 library(survival)
@@ -27,13 +17,6 @@ library(here)
 source(here("DGP.R"))
 
 # ── Helper: compute marginal HR from two counterfactual datasets ─────────────
-#' Stack all-treated and all-control datasets, fit unadjusted Cox,
-#' and extract the marginal HR. This is the "true" HR under each estimand
-#' for comparing against Cox estimates from observed data.
-#' @param df_a1 data.frame; all-treated counterfactual.
-#' @param df_a0 data.frame; all-control counterfactual.
-#' @param tau numeric; follow-up horizon.
-#' @return numeric; marginal hazard ratio.
 compute_true_hr <- function(df_a1, df_a0, tau) {
   df_a1$trt <- 1L
   df_a0$trt <- 0L
@@ -47,296 +30,176 @@ compute_true_hr <- function(df_a1, df_a0, tau) {
   as.numeric(exp(coef(fit)["trt"]))
 }
 
-# ── Truth: Treatment-Policy Estimand ─────────────────────────────────────────
-#' Compute true risks under the treatment-policy estimand.
-#' Under treatment-policy, switching occurs naturally but is not censored.
-#' We generate all-treated and all-control datasets with policy="treatment_policy",
-#' no dependent censoring, and compute 180-day cumulative incidence.
-#'
-#' @param N integer; Monte Carlo sample size (large for precision).
-#' @param tau integer; risk window in days.
-#' @param seed integer; random seed.
-#' @param ... additional DGP arguments (np_hazard, complexity, etc.).
-#' @return list with true_risk_1, true_risk_0, true_rd, true_rr.
+# ── Helper: compute risk at tau ──────────────────────────────────────────────
+compute_risk <- function(df, tau) {
+  mean(df$event == 1 & df$follow_time <= tau)
+}
+
+# ── Truth: Treatment-Policy ──────────────────────────────────────────────────
+#' Generate all-treated and all-control with switching enabled (switch_on=TRUE).
+#' Follow-up is not censored at switch (treatment-policy default).
 truth_treatment_policy <- function(N = 500000, tau = 180, seed = 9999, ...) {
-  dots <- list(...)
-
-  common <- list(
-    N          = N,
-    dep_censor = FALSE,
-    policy     = "treatment_policy",
-    seed       = seed
-  )
-  common <- modifyList(common, dots)
+  common <- list(N = N, dep_censor = FALSE, switch_on = TRUE, seed = seed)
+  common <- modifyList(common, list(...))
 
   df_a1 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_treated")))
   df_a0 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_control")))
 
-  risk_1 <- mean(df_a1$event == 1 & df_a1$follow_time <= tau)
-  risk_0 <- mean(df_a0$event == 1 & df_a0$follow_time <= tau)
-  true_hr <- compute_true_hr(df_a1, df_a0, tau)
+  risk_1 <- compute_risk(df_a1, tau)
+  risk_0 <- compute_risk(df_a0, tau)
 
-  list(
-    estimand    = "treatment_policy",
-    true_risk_1 = risk_1,
-    true_risk_0 = risk_0,
-    true_rd     = risk_1 - risk_0,
-    true_rr     = risk_1 / risk_0,
-    true_hr     = true_hr,
-    N           = N,
-    tau         = tau
-  )
+  list(estimand = "treatment_policy",
+       true_risk_1 = risk_1, true_risk_0 = risk_0,
+       true_rd = risk_1 - risk_0, true_rr = risk_1 / risk_0,
+       true_hr = compute_true_hr(df_a1, df_a0, tau),
+       N = N, tau = tau)
 }
 
-
-# ── Truth: Hypothetical No-Switch Estimand ───────────────────────────────────
-#' Compute true risks under the hypothetical no-switch estimand.
-#' Under no-switch, no switching occurs at all. This gives the counterfactual
-#' outcome distribution in a world where nobody switches treatment.
-#'
-#' @param N integer; Monte Carlo sample size.
-#' @param tau integer; risk window in days.
-#' @param seed integer; random seed.
-#' @param ... additional DGP arguments.
-#' @return list with true_risk_1, true_risk_0, true_rd, true_rr.
+# ── Truth: No-Switch ─────────────────────────────────────────────────────────
+#' Generate all-treated and all-control with switch_on=FALSE.
+#' No switching occurs; potential outcomes under sustained treatment.
 truth_no_switch <- function(N = 500000, tau = 180, seed = 9999, ...) {
-  dots <- list(...)
-
-  common <- list(
-    N          = N,
-    dep_censor = FALSE,
-    policy     = "no_switch",
-    seed       = seed
-  )
-  common <- modifyList(common, dots)
+  common <- list(N = N, dep_censor = FALSE, switch_on = FALSE, seed = seed)
+  common <- modifyList(common, list(...))
 
   df_a1 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_treated")))
   df_a0 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_control")))
 
-  risk_1 <- mean(df_a1$event == 1 & df_a1$follow_time <= tau)
-  risk_0 <- mean(df_a0$event == 1 & df_a0$follow_time <= tau)
-  true_hr <- compute_true_hr(df_a1, df_a0, tau)
+  risk_1 <- compute_risk(df_a1, tau)
+  risk_0 <- compute_risk(df_a0, tau)
 
-  list(
-    estimand    = "no_switch",
-    true_risk_1 = risk_1,
-    true_risk_0 = risk_0,
-    true_rd     = risk_1 - risk_0,
-    true_rr     = risk_1 / risk_0,
-    true_hr     = true_hr,
-    N           = N,
-    tau         = tau
-  )
+  list(estimand = "no_switch",
+       true_risk_1 = risk_1, true_risk_0 = risk_0,
+       true_rd = risk_1 - risk_0, true_rr = risk_1 / risk_0,
+       true_hr = compute_true_hr(df_a1, df_a0, tau),
+       N = N, tau = tau)
 }
 
-
-# ── Truth: While-on-Treatment Estimand ───────────────────────────────────────
-#' Compute true risks under the while-on-treatment estimand.
-#' The WOT estimand conditions on not switching before tau. We generate
-#' large all-treated and all-control datasets under the treatment-policy
-#' regime (switching occurs naturally) and compute risks restricted to
-#' subjects who did not switch before tau. This exercises the actual
-#' switching mechanism and produces a conditional risk among non-switchers,
-#' which differs from the hypothetical no-switch truth when switching is
-#' informative (i.e., non-switchers are a selected subpopulation).
-#'
-#' @param N integer; Monte Carlo sample size.
-#' @param tau integer; risk window in days.
-#' @param seed integer; random seed.
-#' @param ... additional DGP arguments.
-#' @return list with true_risk_1, true_risk_0, true_rd, true_rr,
-#'   pct_nonswitcher_a1, pct_nonswitcher_a0.
+# ── Truth: While-on-Treatment ────────────────────────────────────────────────
+#' Generate all-treated and all-control with switching enabled, then
+#' compute risk conditional on not switching before tau.
 truth_while_on_treatment <- function(N = 500000, tau = 180, seed = 9999, ...) {
-  dots <- list(...)
-
-  common <- list(
-    N          = N,
-    dep_censor = FALSE,
-    policy     = "treatment_policy",
-    switch_on  = TRUE,
-    seed       = seed
-  )
-  common <- modifyList(common, dots)
+  common <- list(N = N, dep_censor = FALSE, switch_on = TRUE, seed = seed)
+  common <- modifyList(common, list(...))
 
   df_a1 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_treated")))
   df_a0 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_control")))
 
-  # Non-switchers: subjects whose switch_time exceeds tau
   ns_a1 <- df_a1$switch_time > tau
   ns_a0 <- df_a0$switch_time > tau
 
   risk_1 <- mean(df_a1$event_time[ns_a1] <= tau)
   risk_0 <- mean(df_a0$event_time[ns_a0] <= tau)
-
-  # Marginal HR among non-switchers
   true_hr <- compute_true_hr(df_a1[ns_a1, ], df_a0[ns_a0, ], tau)
 
-  list(
-    estimand           = "while_on_treatment",
-    true_risk_1        = risk_1,
-    true_risk_0        = risk_0,
-    true_rd            = risk_1 - risk_0,
-    true_rr            = risk_1 / risk_0,
-    true_hr            = true_hr,
-    pct_nonswitcher_a1 = mean(ns_a1),
-    pct_nonswitcher_a0 = mean(ns_a0),
-    N                  = N,
-    tau                = tau
-  )
+  list(estimand = "while_on_treatment",
+       true_risk_1 = risk_1, true_risk_0 = risk_0,
+       true_rd = risk_1 - risk_0, true_rr = risk_1 / risk_0,
+       true_hr = true_hr,
+       pct_nonswitcher_a1 = mean(ns_a1),
+       pct_nonswitcher_a0 = mean(ns_a0),
+       N = N, tau = tau)
 }
 
-
-# ── Truth: Composite Estimand ────────────────────────────────────────────────
-#' Compute true risks under the composite estimand.
-#' Under composite, the outcome is AKI *or* switching (whichever comes first).
-#' We generate all-treated and all-control datasets with policy="composite"
-#' and compute 180-day cumulative incidence of the composite endpoint.
-#'
-#' @param N integer; Monte Carlo sample size.
-#' @param tau integer; risk window in days.
-#' @param seed integer; random seed.
-#' @param ... additional DGP arguments.
-#' @return list with true_risk_1, true_risk_0, true_rd, true_rr.
+# ── Truth: Composite ─────────────────────────────────────────────────────────
+#' Generate all-treated and all-control with switching, then derive
+#' composite outcome (renal failure or switching, whichever first).
 truth_composite <- function(N = 500000, tau = 180, seed = 9999, ...) {
-  dots <- list(...)
-
-  common <- list(
-    N          = N,
-    dep_censor = FALSE,
-    policy     = "composite",
-    seed       = seed
-  )
-  common <- modifyList(common, dots)
+  common <- list(N = N, dep_censor = FALSE, switch_on = TRUE, seed = seed)
+  common <- modifyList(common, list(...))
 
   df_a1 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_treated")))
   df_a0 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_control")))
 
-  risk_1 <- mean(df_a1$event == 1 & df_a1$follow_time <= tau)
-  risk_0 <- mean(df_a0$event == 1 & df_a0$follow_time <= tau)
-  true_hr <- compute_true_hr(df_a1, df_a0, tau)
+  # Apply composite outcome definition
+  df_a1 <- derive_estimand(df_a1, "composite")
+  df_a0 <- derive_estimand(df_a0, "composite")
 
-  list(
-    estimand    = "composite",
-    true_risk_1 = risk_1,
-    true_risk_0 = risk_0,
-    true_rd     = risk_1 - risk_0,
-    true_rr     = risk_1 / risk_0,
-    true_hr     = true_hr,
-    N           = N,
-    tau         = tau
-  )
+  risk_1 <- compute_risk(df_a1, tau)
+  risk_0 <- compute_risk(df_a0, tau)
+
+  list(estimand = "composite",
+       true_risk_1 = risk_1, true_risk_0 = risk_0,
+       true_rd = risk_1 - risk_0, true_rr = risk_1 / risk_0,
+       true_hr = compute_true_hr(df_a1, df_a0, tau),
+       N = N, tau = tau)
 }
 
-
-# ── Truth: Principal Stratum Estimand ────────────────────────────────────────
-#' Compute true risks under the principal stratum estimand.
-#' The principal stratum of "never-switchers" consists of subjects who
-#' would not switch under either treatment assignment. Since we control
-#' the DGP, we can identify this stratum by generating switching times
-#' under both treatments for the same subjects and restricting to those
-#' who would not switch under either.
-#'
-#' Implementation: generate a cohort with no treatment override, draw
-#' switching times under both treatments using the same random seed for
-#' baseline covariates, identify the never-switcher stratum, then compute
-#' event risks for that subpopulation.
-#'
-#' @param N integer; Monte Carlo sample size.
-#' @param tau integer; risk window in days.
-#' @param seed integer; random seed.
-#' @param ... additional DGP arguments.
-#' @return list with true_risk_1, true_risk_0, true_rd, true_rr.
+# ── Truth: Principal Stratum ─────────────────────────────────────────────────
+#' Generate all-treated and all-control with paired switching draws
+#' to identify the true never-switcher stratum.
 truth_principal_stratum <- function(N = 500000, tau = 180, seed = 9999, ...) {
-  dots <- list(...)
+  common <- list(N = N, dep_censor = FALSE, switch_on = TRUE,
+                 return_potential_switching = TRUE, seed = seed)
+  common <- modifyList(common, list(...))
 
-  common <- list(
-    N          = N,
-    dep_censor = FALSE,
-    policy     = "treatment_policy",
-    seed       = seed
-  )
-  common <- modifyList(common, dots)
-
-  # Generate under all-treated and all-control with the SAME seed
-  # so baseline covariates are identical across the two worlds.
   df_a1 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_treated")))
   df_a0 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_control")))
 
-  # Never-switchers: would not switch under either treatment
-  # would_switch is based on switch_time <= max_follow
-  never_switcher <- df_a1$would_switch == 0 & df_a0$would_switch == 0
+  never_sw <- df_a1$never_switcher == 1 & df_a0$never_switcher == 1
 
-  risk_1 <- mean(df_a1$event[never_switcher] == 1 &
-                   df_a1$follow_time[never_switcher] <= tau)
-  risk_0 <- mean(df_a0$event[never_switcher] == 1 &
-                   df_a0$follow_time[never_switcher] <= tau)
-  true_hr <- compute_true_hr(df_a1[never_switcher, ], df_a0[never_switcher, ], tau)
+  risk_1 <- mean(df_a1$event_time[never_sw] <= tau)
+  risk_0 <- mean(df_a0$event_time[never_sw] <= tau)
+  true_hr <- compute_true_hr(df_a1[never_sw, ], df_a0[never_sw, ], tau)
 
-  list(
-    estimand      = "principal_stratum",
-    true_risk_1   = risk_1,
-    true_risk_0   = risk_0,
-    true_rd       = risk_1 - risk_0,
-    true_rr       = risk_1 / risk_0,
-    true_hr       = true_hr,
-    n_never_switch = sum(never_switcher),
-    pct_never_switch = mean(never_switcher),
-    N             = N,
-    tau           = tau
-  )
+  list(estimand = "principal_stratum",
+       true_risk_1 = risk_1, true_risk_0 = risk_0,
+       true_rd = risk_1 - risk_0, true_rr = risk_1 / risk_0,
+       true_hr = true_hr,
+       n_never_switch = sum(never_sw),
+       pct_never_switch = mean(never_sw),
+       N = N, tau = tau)
 }
 
 
 # ── Compute and save ─────────────────────────────────────────────────────────
-
 if (sys.nframe() == 0) {
-  # Only run when sourced as a script, not when sourced by other files
   set.seed(12345)
+  dgp_args <- list(np_hazard = TRUE, complexity = TRUE)
 
-  message("Computing treatment-policy truth (N = 500,000)...")
-  truth_tp <- truth_treatment_policy(
-    N = 500000, tau = 180, seed = 9999,
-    np_hazard = TRUE, complexity = TRUE,
-    switch_on = TRUE  # switching happens but does not censor
-  )
-
-  message("Computing no-switch truth (N = 500,000)...")
-  truth_ns <- truth_no_switch(
-    N = 500000, tau = 180, seed = 9999,
-    np_hazard = TRUE, complexity = TRUE
-  )
+  message("Computing treatment-policy truth...")
+  truth_tp <- do.call(truth_treatment_policy,
+    c(list(N = 500000, tau = 180, seed = 9999), dgp_args))
+  message("Computing no-switch truth...")
+  truth_ns <- do.call(truth_no_switch,
+    c(list(N = 500000, tau = 180, seed = 9999), dgp_args))
+  message("Computing while-on-treatment truth...")
+  truth_wot <- do.call(truth_while_on_treatment,
+    c(list(N = 500000, tau = 180, seed = 9999), dgp_args))
+  message("Computing composite truth...")
+  truth_comp <- do.call(truth_composite,
+    c(list(N = 500000, tau = 180, seed = 9999), dgp_args))
+  message("Computing principal stratum truth...")
+  truth_ps <- do.call(truth_principal_stratum,
+    c(list(N = 500000, tau = 180, seed = 9999), dgp_args))
 
   truth_all <- list(
-    treatment_policy = truth_tp,
-    no_switch        = truth_ns
+    treatment_policy   = truth_tp,
+    no_switch          = truth_ns,
+    while_on_treatment = truth_wot,
+    composite          = truth_comp,
+    principal_stratum  = truth_ps
   )
 
-  # TODO(Joy): verify that these parameters match the hepatitis B
-  #   renal failure incidence rates from the literature.
+  for (nm in names(truth_all)) {
+    t <- truth_all[[nm]]
+    message(sprintf("  %-20s RD=%+.6f  RR=%.4f  HR=%.4f",
+                    nm, t$true_rd, t$true_rr, t$true_hr))
+  }
 
-  message("\n=== Treatment-Policy Truth ===")
-  message("  Risk (treated):  ", round(truth_tp$true_risk_1, 6))
-  message("  Risk (control):  ", round(truth_tp$true_risk_0, 6))
-  message("  Risk difference: ", round(truth_tp$true_rd, 6))
-  message("  Risk ratio:      ", round(truth_tp$true_rr, 4))
-
-  message("\n=== No-Switch Truth ===")
-  message("  Risk (treated):  ", round(truth_ns$true_risk_1, 6))
-  message("  Risk (control):  ", round(truth_ns$true_risk_0, 6))
-  message("  Risk difference: ", round(truth_ns$true_rd, 6))
-  message("  Risk ratio:      ", round(truth_ns$true_rr, 4))
-
-  dir.create(here("results", "sim_results"), recursive = TRUE, showWarnings = FALSE)
-  saveRDS(truth_all, file = here("results", "sim_results", "ground_truth.rds"))
-  message("\nSaved to results/sim_results/ground_truth.rds")
+  dir.create(here("results", "sim_results"), recursive = TRUE,
+             showWarnings = FALSE)
+  saveRDS(truth_all, file = here("results", "sim_results",
+                                  "ground_truth.rds"))
+  message("Saved to results/sim_results/ground_truth.rds")
 }
