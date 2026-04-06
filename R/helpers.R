@@ -1,6 +1,9 @@
 # helpers.R
-# Utility functions for the estimand-estimator alignment tutorial.
+# Utility functions for the estimand-estimator simulation study.
 # Provides Cox regression variants, LMTP data preparation, and risk utilities.
+# Note: the LMTP analysis uses static baseline interventions for all policies.
+# A distinct no-switch intervention (preventing post-baseline switching) is
+# not yet implemented; see intervention_no_switch() placeholder.
 
 # TODO(Joy): confirm exact file paths for the archived Cox and LMTP scripts used.
 
@@ -50,9 +53,9 @@ expand_person_period <- function(dat, tau = 180, covars = NULL) {
 
 # ── Naive Cox: baseline treatment only ───────────────────────────────────────
 #' Fit a Cox model using only baseline treatment assignment (ignores switching).
-#' This does not cleanly target either the treatment-policy or the hypothetical
-#' estimand: the Cox HR is a conditional parameter and the risk set may be
-#' altered by switching-induced censoring in the original data.
+#' Estimates a conditional hazard ratio, not a marginal risk contrast. Often
+#' interpreted as a treatment-policy analysis, but the Cox HR does not
+#' correspond to the marginal risk difference defined by that estimand.
 #' @param dat data.frame with follow_time, event, treatment, and baseline covariates.
 #' @param tau numeric; follow-up horizon.
 #' @param covars character vector of adjustment covariates.
@@ -89,8 +92,9 @@ fit_cox_naive <- function(dat, tau = 180,
 
 # ── Cox: censor at switch ────────────────────────────────────────────────────
 #' Fit a Cox model that censors follow-up at the observed treatment switch time.
-#' Targets a while-on-treatment / hypothetical estimand but is biased when
-#' switching is informative.
+#' Often used to approximate a hypothetical or while-on-treatment analysis.
+#' Estimates a conditional HR among non-censored person-time; biased when
+#' switching is informative (i.e., when the censoring assumption is violated).
 #' @param dat data.frame; must contain follow_time, event, switch_time,
 #'   switched, treatment.
 #' @param tau numeric; follow-up horizon.

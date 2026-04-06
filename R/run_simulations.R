@@ -1,12 +1,18 @@
 # run_simulations.R
-# Repeated simulation study comparing estimators WITHIN each estimand.
-# For each estimand (treatment-policy and hypothetical no-switch), we fit:
-#   1. Naive Cox HR (baseline treatment only) -- misaligned
-#   2. Cox censoring at switch -- misaligned for treatment-policy; naive for hypothetical
-#   3. Cox with time-dependent treatment -- misaligned
-#   4. LMTP SDR targeting the correct intervention -- aligned
-# We also run three support scenarios (good, strained, poor) to show how
-# estimation degrades with weak positivity.
+# Repeated simulation study comparing estimators under each DGP policy.
+#
+# For each DGP policy (treatment_policy, no_switch, while_on_treatment,
+# composite, principal_stratum), data are generated and three estimators
+# are applied:
+#   1. Baseline-treatment Cox HR (ignores switching)
+#   2. Censor-at-switch Cox HR
+#   3. LMTP SDR (static baseline intervention)
+#
+# The LMTP analysis uses the same static intervention specification for
+# most policies. For the principal stratum, it restricts to observed
+# non-switchers (an approximation). The composite LMTP is known to be
+# misspecified (the censoring model adjusts away switching, whereas the
+# composite counts it as an event).
 
 # TODO(Joy): fill in exact runtime notes after benchmarking.
 

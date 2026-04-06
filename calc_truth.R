@@ -1,7 +1,24 @@
 # calc_truth.R
-# Compute Monte Carlo ground truth for each estimand from the DGP.
-# Generates large counterfactual datasets under each policy to obtain
-# true 180-day risks, risk differences, and risk ratios.
+# Compute Monte Carlo ground truth under each DGP policy.
+#
+# Each truth function generates large counterfactual datasets (all-treated
+# and all-control) under a specific DGP policy and computes 180-day marginal
+# risks, risk differences, risk ratios, and marginal HRs.
+#
+# Important notes on interpretation:
+# - treatment_policy: switching occurs and modifies the hazard, but does not
+#   censor. Truth reflects outcomes under natural switching behaviour.
+# - no_switch: switching is suppressed entirely. Truth reflects potential
+#   outcomes under sustained treatment.
+# - while_on_treatment: uses policy="no_switch" as a shortcut. Under uniform
+#   counterfactual treatment (all-treated or all-control), nobody switches,
+#   so the numerical truth is identical to no_switch. This does NOT exercise
+#   the censoring-at-switch mechanism; the truth should not be interpreted as
+#   a full validation of while-on-treatment estimators.
+# - composite: event = AKI or switching. Under counterfactual uniform treatment,
+#   switching still occurs (driven by treatment-dependent hazard).
+# - principal_stratum: restricts to subjects who would not switch under either
+#   treatment assignment. Requires generating both potential switching outcomes.
 
 library(dplyr)
 library(survival)
