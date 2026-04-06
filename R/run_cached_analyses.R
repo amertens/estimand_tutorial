@@ -194,6 +194,7 @@ if (!file.exists(sim_cache)) {
     run_lmtp    = TRUE,
     run_cox_td  = FALSE,
     dgp_args    = list(np_hazard = TRUE, dep_censor = TRUE,
+                       return_potential_switching = TRUE,
                        complexity = TRUE),
     cache_file  = sim_cache
   )

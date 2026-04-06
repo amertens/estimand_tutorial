@@ -26,6 +26,7 @@ generate_hep_data <- function(
     ## misc
     censor_base     = 1/100,      # admin censoring rate (1/days), only used when dep_censor=TRUE
     treat_override  = c("simulate", "all_treated", "all_control"),
+    return_potential_switching = FALSE,  # TRUE: add never_switcher column for PS
     add_missing     = FALSE,
     impute          = FALSE,
     seed            = NULL)
@@ -108,12 +109,28 @@ generate_hep_data <- function(
   if (!switch_on) {
     cohort$switch_time   <- Inf
     cohort$switched      <- 0L
+    if (return_potential_switching) {
+      cohort$never_switcher <- 1L
+    }
   } else {
-    lambda_sw <- lambda_sw0 *
-      exp(gamma_A * cohort$treatment + gamma_ckd * cohort$ckd)
-    Sw_lat <- rexp(nrow(cohort), rate = lambda_sw)
-    cohort$switch_time <- Sw_lat
-    cohort$switched    <- 0L  # will be refined after event times
+    if (return_potential_switching) {
+      # Draw potential switching times under both treatment assignments
+      # using the same uniform random draws (save/restore RNG state).
+      rng_state <- .Random.seed
+      lambda_sw_a1 <- lambda_sw0 * exp(gamma_A * 1 + gamma_ckd * cohort$ckd)
+      sw_a1 <- rexp(nrow(cohort), rate = lambda_sw_a1)
+      .Random.seed <<- rng_state
+      lambda_sw_a0 <- lambda_sw0 * exp(gamma_A * 0 + gamma_ckd * cohort$ckd)
+      sw_a0 <- rexp(nrow(cohort), rate = lambda_sw_a0)
+      # Use actual treatment to determine observed switch time
+      cohort$switch_time <- ifelse(cohort$treatment == 1, sw_a1, sw_a0)
+      cohort$never_switcher <- as.integer(sw_a1 > max_follow & sw_a0 > max_follow)
+    } else {
+      lambda_sw <- lambda_sw0 *
+        exp(gamma_A * cohort$treatment + gamma_ckd * cohort$ckd)
+      cohort$switch_time <- rexp(nrow(cohort), rate = lambda_sw)
+    }
+    cohort$switched <- 0L  # will be refined after event times
   }
 
   ##--------------------------------------------------------------------------
@@ -270,6 +287,7 @@ generate_hep_data <- function(
       ckd, diabetes, hypertension, cirrhosis, heart_failure,
       nsaid, acearb, statin,
       treatment, event_time, switch_time, follow_time, event, switched,
+      any_of("never_switcher"),
       would_switch
     )
 

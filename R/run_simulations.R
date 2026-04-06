@@ -110,60 +110,94 @@ run_one_iter <- function(i, estimand = "treatment_policy",
   }
 
   # ── D. LMTP SDR ──
-  # Estimand-specific LMTP handling:
-  #   treatment_policy:   static on/off on full data (default)
-  #   no_switch:          static on/off on data generated without switching
-  #   while_on_treatment: static on/off; DGP censors at switch, LMTP
-  #                       censoring model accounts for this
-  #   composite:          static on/off; outcome = AKI or switch (already
-  #                       encoded in DGP event column under composite policy)
-  #   principal_stratum:  subset to observed non-switchers, then static on/off.
-  #                       This is an approximation -- the true principal stratum
-  #                       requires both potential switching indicators.
+  # Estimand-specific dispatch:
+  #   treatment_policy:   time-fixed treatment, static on/off. LMTP censoring
+  #                       model handles switching.
+  #   no_switch:          time-varying treatment (A_j columns). Static on/off
+  #                       intervention holds treatment constant = no switching.
+  #   while_on_treatment: same as no_switch (time-varying, hold constant).
+  #                       DGP censors at switch; LMTP adjusts for it.
+  #   composite:          time-fixed treatment, static on/off. Outcome already
+  #                       includes switching as an event (no censoring model
+  #                       needed for switching).
+  #   principal_stratum:  two runs: (a) observed non-switchers, (b) true
+  #                       never-switchers if never_switcher column exists.
+
+  # Helper to extract LMTP contrasts (handles old and new API)
+  extract_lmtp <- function(res, label) {
+    rd_obj <- res$contrast_rd
+    rd_est <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$estimate
+              else rd_obj$vals$theta
+    rd_se  <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$std.error
+              else rd_obj$vals$std.error
+    rd_ci  <- rd_est + c(-1, 1) * 1.96 * rd_se
+    rr_obj <- res$contrast_rr
+    rr_est <- if (!is.null(rr_obj$estimates)) rr_obj$estimates$estimate
+              else rr_obj$vals$theta
+    data.frame(
+      method = label, hr = NA_real_,
+      ci_low = rd_ci[1], ci_high = rd_ci[2],
+      risk_diff = rd_est, risk_ratio = rr_est, converged = TRUE
+    )
+  }
+
   if (run_lmtp) {
-    results[["lmtp"]] <- tryCatch({
-      requireNamespace("lmtp", quietly = TRUE)
+    requireNamespace("lmtp", quietly = TRUE)
 
-      # For principal stratum: restrict to observed non-switchers
-      lmtp_dat <- if (estimand == "principal_stratum") {
-        dat[dat$switched == 0, ]
-      } else {
-        dat
+    if (estimand %in% c("no_switch", "while_on_treatment")) {
+      # ── Time-varying treatment: intervention holds A constant ──
+      results[["lmtp"]] <- tryCatch({
+        n_events <- sum(dat$event == 1 & dat$follow_time <= tau)
+        if (n_events < 5) stop("Too few events: ", n_events)
+        prep <- prepare_lmtp_data_tv(dat, tau = tau, bin_width = bin_width)
+        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+        extract_lmtp(res, "LMTP SDR (no-switch)")
+      }, error = function(e) {
+        data.frame(method = "LMTP SDR (no-switch)", hr = NA, ci_low = NA,
+                   ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
+      })
+
+    } else if (estimand == "principal_stratum") {
+      # ── Two runs: observed non-switchers + true never-switchers ──
+      results[["lmtp_approx"]] <- tryCatch({
+        sub <- dat[dat$switched == 0, ]
+        n_events <- sum(sub$event == 1 & sub$follow_time <= tau)
+        if (n_events < 5) stop("Too few events: ", n_events)
+        prep <- prepare_lmtp_data(sub, tau = tau, bin_width = bin_width)
+        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+        extract_lmtp(res, "LMTP SDR (obs. non-switchers)")
+      }, error = function(e) {
+        data.frame(method = "LMTP SDR (obs. non-switchers)", hr = NA, ci_low = NA,
+                   ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
+      })
+
+      if ("never_switcher" %in% names(dat)) {
+        results[["lmtp_true_ps"]] <- tryCatch({
+          sub <- dat[dat$never_switcher == 1, ]
+          n_events <- sum(sub$event == 1 & sub$follow_time <= tau)
+          if (n_events < 5) stop("Too few events: ", n_events)
+          prep <- prepare_lmtp_data(sub, tau = tau, bin_width = bin_width)
+          res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+          extract_lmtp(res, "LMTP SDR (true PS)")
+        }, error = function(e) {
+          data.frame(method = "LMTP SDR (true PS)", hr = NA, ci_low = NA,
+                     ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
+        })
       }
 
-      # Check we have enough data and events
-      n_events <- sum(lmtp_dat$event == 1 & lmtp_dat$follow_time <= tau)
-      if (n_events < 5) stop("Too few events for LMTP: ", n_events)
-
-      prep <- prepare_lmtp_data(lmtp_dat, tau = tau, bin_width = bin_width)
-      res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
-
-      # Handle both old ($vals$theta) and new ($estimates$estimate) lmtp API
-      rd_obj <- res$contrast_rd
-      rd_est <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$estimate
-                else rd_obj$vals$theta
-      rd_se  <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$std.error
-                else rd_obj$vals$std.error
-      rd_ci  <- rd_est + c(-1, 1) * 1.96 * rd_se
-      rr_obj <- res$contrast_rr
-      rr_est <- if (!is.null(rr_obj$estimates)) rr_obj$estimates$estimate
-                else rr_obj$vals$theta
-
-      method_label <- if (estimand == "principal_stratum") {
-        "LMTP SDR (non-switchers)"
-      } else {
-        "LMTP SDR"
-      }
-
-      data.frame(
-        method = method_label, hr = NA_real_,
-        ci_low = rd_ci[1], ci_high = rd_ci[2],
-        risk_diff = rd_est, risk_ratio = rr_est, converged = TRUE
-      )
-    }, error = function(e) {
-      data.frame(method = "LMTP SDR", hr = NA, ci_low = NA,
-                 ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
-    })
+    } else {
+      # ── treatment_policy, composite: time-fixed treatment ──
+      results[["lmtp"]] <- tryCatch({
+        n_events <- sum(dat$event == 1 & dat$follow_time <= tau)
+        if (n_events < 5) stop("Too few events: ", n_events)
+        prep <- prepare_lmtp_data(dat, tau = tau, bin_width = bin_width)
+        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+        extract_lmtp(res, "LMTP SDR")
+      }, error = function(e) {
+        data.frame(method = "LMTP SDR", hr = NA, ci_low = NA,
+                   ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
+      })
+    }
   }
 
   out <- bind_rows(results)

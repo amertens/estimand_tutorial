@@ -136,35 +136,28 @@ truth_no_switch <- function(N = 500000, tau = 180, seed = 9999, ...) {
 
 # ── Truth: While-on-Treatment Estimand ───────────────────────────────────────
 #' Compute true risks under the while-on-treatment estimand.
-#' Under while-on-treatment, subjects are censored at their switch time.
-#' Only events occurring before switching contribute. We generate large
-#' counterfactual datasets with policy="while_on_treatment" and no dependent
-#' censoring, then compute 180-day cumulative incidence among non-switchers.
-#'
-#' Note: for the truth calculation under treat_override, all subjects receive
-#' the same treatment so switching patterns differ from the observed data.
-#' We use policy="no_switch" with switch_on=FALSE to get the clean
-#' potential outcome under sustained treatment (equivalent to while-on-treatment
-#' when everyone stays on their assigned treatment).
+#' The WOT estimand conditions on not switching before tau. We generate
+#' large all-treated and all-control datasets under the treatment-policy
+#' regime (switching occurs naturally) and compute risks restricted to
+#' subjects who did not switch before tau. This exercises the actual
+#' switching mechanism and produces a conditional risk among non-switchers,
+#' which differs from the hypothetical no-switch truth when switching is
+#' informative (i.e., non-switchers are a selected subpopulation).
 #'
 #' @param N integer; Monte Carlo sample size.
 #' @param tau integer; risk window in days.
 #' @param seed integer; random seed.
 #' @param ... additional DGP arguments.
-#' @return list with true_risk_1, true_risk_0, true_rd, true_rr.
+#' @return list with true_risk_1, true_risk_0, true_rd, true_rr,
+#'   pct_nonswitcher_a1, pct_nonswitcher_a0.
 truth_while_on_treatment <- function(N = 500000, tau = 180, seed = 9999, ...) {
   dots <- list(...)
 
-  # While-on-treatment under all-treated or all-control means nobody switches
-  # away (everyone is on the same drug). This is equivalent to the no-switch
-  # truth for counterfactual populations, but the estimand interpretation
-  # differs: WOT conditions on not switching rather than intervening to
-  # prevent switching. The numerical truth is identical when treat_override
-  # forces uniform treatment.
   common <- list(
     N          = N,
     dep_censor = FALSE,
-    policy     = "no_switch",
+    policy     = "treatment_policy",
+    switch_on  = TRUE,
     seed       = seed
   )
   common <- modifyList(common, dots)
@@ -174,19 +167,27 @@ truth_while_on_treatment <- function(N = 500000, tau = 180, seed = 9999, ...) {
   df_a0 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_control")))
 
-  risk_1 <- mean(df_a1$event == 1 & df_a1$follow_time <= tau)
-  risk_0 <- mean(df_a0$event == 1 & df_a0$follow_time <= tau)
-  true_hr <- compute_true_hr(df_a1, df_a0, tau)
+  # Non-switchers: subjects whose switch_time exceeds tau
+  ns_a1 <- df_a1$switch_time > tau
+  ns_a0 <- df_a0$switch_time > tau
+
+  risk_1 <- mean(df_a1$event_time[ns_a1] <= tau)
+  risk_0 <- mean(df_a0$event_time[ns_a0] <= tau)
+
+  # Marginal HR among non-switchers
+  true_hr <- compute_true_hr(df_a1[ns_a1, ], df_a0[ns_a0, ], tau)
 
   list(
-    estimand    = "while_on_treatment",
-    true_risk_1 = risk_1,
-    true_risk_0 = risk_0,
-    true_rd     = risk_1 - risk_0,
-    true_rr     = risk_1 / risk_0,
-    true_hr     = true_hr,
-    N           = N,
-    tau         = tau
+    estimand           = "while_on_treatment",
+    true_risk_1        = risk_1,
+    true_risk_0        = risk_0,
+    true_rd            = risk_1 - risk_0,
+    true_rr            = risk_1 / risk_0,
+    true_hr            = true_hr,
+    pct_nonswitcher_a1 = mean(ns_a1),
+    pct_nonswitcher_a0 = mean(ns_a0),
+    N                  = N,
+    tau                = tau
   )
 }
 

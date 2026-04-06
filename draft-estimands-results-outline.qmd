@@ -452,17 +452,15 @@ Causal interpretation of any observational estimate depends on the assumption of
 
 ## Limitations
 
-Several limitations of the current analysis should be noted.
+The LMTP analysis for the no-switch and while-on-treatment estimands models treatment as time-varying and applies a static intervention that holds treatment constant across all time bins. This directly implements the "no switching" intervention within LMTP. For the treatment-policy estimand, treatment is modelled as time-fixed (baseline only), and the LMTP censoring model handles informative follow-up loss due to switching. The degree of alignment depends on correct specification of the censoring and outcome models.
 
-The treatment-policy and hypothetical no-switch estimands are distinguished in this simulation by generating data under different DGP policies, not by employing different LMTP intervention specifications. Both LMTP analyses use the same static baseline intervention (set $A = 1$ or $A = 0$) with a censoring model to handle informative follow-up loss. A fully distinct hypothetical no-switch analysis would require an intervention that sets treatment at every post-baseline time point to the initial assignment, preventing switching within the LMTP framework itself. The current implementation therefore approximates the intended contrast rather than directly targeting it.
+The while-on-treatment truth is computed as the conditional risk among subjects who would not switch before the 180-day risk window under counterfactual uniform treatment. This exercises the switching mechanism but remains a conditional quantity (conditioning on a post-treatment variable), which differs conceptually from an interventional target.
 
-The while-on-treatment truth is computed under uniform treatment assignment (all-treated or all-control), where no switching occurs. This produces a numerically correct result for that counterfactual scenario, but does not exercise the censoring-at-switch mechanism that defines the while-on-treatment estimand in observed data. It should not be interpreted as a full validation of any while-on-treatment estimator.
+The composite LMTP analysis uses the DGP's composite outcome (renal failure or switching, whichever comes first) directly. Under the composite policy, switching is encoded in the event indicator rather than the censoring indicator, so the LMTP censoring model adjusts only for administrative censoring. This addresses the prior misspecification concern, though the composite estimand's clinical interpretability remains limited.
 
-The composite LMTP analysis is misspecified: the LMTP censoring model adjusts away switching, whereas the composite estimand requires switching to be counted as an event. The resulting estimates are therefore uninformative about composite estimand performance and are included only to illustrate the consequences of intervention--estimand mismatch.
+For the principal stratum, two LMTP analyses are reported: one restricted to observed non-switchers (a convenience approximation) and one restricted to true never-switchers identified through both potential switching outcomes. The true-stratum analysis is possible because the DGP generates paired switching indicators under each treatment assignment. In practice, the never-switcher stratum is latent and would require structural assumptions (e.g., monotonicity) or sensitivity analysis for identification.
 
-The principal stratum analysis restricts to observed non-switchers, which is not equivalent to the latent never-switcher stratum defined by joint potential switching outcomes. The approximation systematically selects lower-risk patients.
-
-Biweekly time bins and a minimal Super Learner library (`SL.mean`, `SL.glm`, `SL.bayesglm`) are used throughout. Finer discretisation and a richer learner set---including penalised regression and tree-based methods---would likely reduce residual bias. The simulation uses 20 iterations; coverage estimates at this sample size are imprecise (e.g., the 95\% confidence interval for 80\% coverage with $n = 20$ spans roughly 56--94\%).
+Biweekly time bins and a minimal Super Learner library (`SL.mean`, `SL.glm`, `SL.bayesglm`) are used throughout. Finer discretisation and a richer learner set would likely reduce residual bias. The simulation uses 20 iterations; coverage estimates at this sample size are imprecise.
 
 <!-- TODO(Joy): increase iterations and enrich SL library for production. -->
 
