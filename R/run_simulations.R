@@ -149,7 +149,7 @@ run_one_iter <- function(i, estimand = "treatment_policy",
       results[["lmtp"]] <- tryCatch({
         n_events <- sum(dat$event == 1 & dat$follow_time <= tau)
         if (n_events < 5) stop("Too few events: ", n_events)
-        prep <- prepare_lmtp_data_tv(dat, tau = tau, bin_width = bin_width)
+        prep <- prepare_lmtp_data(dat, tau = tau, bin_width = bin_width)
         res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
         extract_lmtp(res, "LMTP SDR (no-switch)")
       }, error = function(e) {

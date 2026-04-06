@@ -345,81 +345,10 @@ prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,trt_var = "treatment
 }
 
 
-# ── LMTP data preparation: time-varying treatment ────────────────────────────
-#' Prepare wide-format data for lmtp_sdr() with time-varying treatment.
-#' Creates one treatment column per time bin (A1, ..., An) reflecting actual
-#' treatment status: baseline assignment before switch_time, opposite
-#' assignment after. Used for no-switch and while-on-treatment estimands,
-#' where the LMTP intervention holds treatment constant (preventing switching).
-#' @param dat data.frame from generate_hep_data(). Must contain switch_time.
-#' @param tau integer; follow-up horizon in days.
-#' @param bin_width integer; days per bin.
-#' @param baseline character vector of baseline covariate names.
-#' @return list with data, Y_cols, C_cols, A_cols, baseline, n_bins.
-prepare_lmtp_data_tv <- function(dat, tau = 180, bin_width = 14,
-                                 baseline = c("age", "sex_male", "ckd",
-                                              "diabetes", "hypertension",
-                                              "heart_failure")) {
-  baseline <- intersect(baseline, names(dat))
-
-  bin_edges <- seq(0, tau, by = bin_width)
-  if (tail(bin_edges, 1) < tau) bin_edges <- c(bin_edges, tau)
-  n_bins <- length(bin_edges) - 1
-
-  dat <- dat %>%
-    mutate(
-      aki_event    = as.integer(event == 1 & follow_time <= tau),
-      time_to_aki  = if_else(aki_event == 1, follow_time, as.numeric(tau)),
-      cens_event   = as.integer(event == 0 & follow_time < tau),
-      time_to_cens = if_else(cens_event == 1, follow_time, as.numeric(tau))
-    )
-
-  # Build Y and C (identical to prepare_lmtp_data)
-  make_Y <- function(t_aki, e) as.integer(bin_edges[-1] >= t_aki & e == 1)
-  make_C <- function(t_c, e) {
-    v <- rep(1L, n_bins)
-    if (e == 1 && t_c < tau) {
-      cens_bin <- which(bin_edges[-1] > t_c)[1]
-      if (!is.na(cens_bin) && cens_bin <= n_bins) v[seq(cens_bin, n_bins)] <- 0L
-    }
-    v
-  }
-
-  Y_mat <- t(mapply(make_Y, dat$time_to_aki, dat$aki_event))
-  C_mat <- t(mapply(make_C, dat$time_to_cens, dat$cens_event))
-
-  # Build time-varying treatment: Aj = observed treatment at bin j
-  # Before switch_time: Aj = baseline treatment
-  # After switch_time: Aj = 1 - baseline treatment (switched)
-  sw_time <- if ("switch_time" %in% names(dat)) dat$switch_time else rep(Inf, nrow(dat))
-  A_mat <- matrix(NA_integer_, nrow = nrow(dat), ncol = n_bins)
-  for (j in seq_len(n_bins)) {
-    bin_start <- bin_edges[j]
-    A_mat[, j] <- ifelse(sw_time > bin_start,
-                         dat$treatment,
-                         1L - dat$treatment)
-  }
-
-  Y_cols <- paste0("Y", seq_len(n_bins))
-  C_cols <- paste0("C", seq_len(n_bins))
-  A_cols <- paste0("A", seq_len(n_bins))
-  colnames(Y_mat) <- Y_cols
-  colnames(C_mat) <- C_cols
-  colnames(A_mat) <- A_cols
-
-  wide <- bind_cols(
-    dat %>% select(id, treatment, all_of(baseline)),
-    as_tibble(A_mat),
-    as_tibble(Y_mat),
-    as_tibble(C_mat)
-  )
-
-  wide <- lmtp::event_locf(as.data.frame(wide), outcomes = Y_cols)
-
-  list(data = as.data.frame(wide), Y_cols = Y_cols, C_cols = C_cols,
-       A_cols = A_cols, baseline = c("treatment", baseline),
-       n_bins = n_bins, bin_width = bin_width)
-}
+# Note: prepare_lmtp_data_tv() has been merged into prepare_lmtp_data()
+# above (Joy's update). The unified function always creates A_cols for
+# time-varying treatment. For no-switch/WOT, the static_binary_on/off
+# intervention holds treatment constant across all bins.
 
 
 # ── LMTP estimation wrapper ─────────────────────────────────────────────────
@@ -450,12 +379,7 @@ run_lmtp_analysis <- function(lmtp_prep,
 
   common_args <- list(
     data    = lmtp_prep$data,
-<<<<<<< HEAD
     trt     = trt_spec,
-=======
-    trt     =lmtp_prep$A_cols,
-    #trt     = "treatment",
->>>>>>> 1cccf46482ef51e89cf0feb969956762079ca2c6
     outcome = lmtp_prep$Y_cols,
     cens    = lmtp_prep$C_cols,
     baseline = lmtp_prep$baseline,
