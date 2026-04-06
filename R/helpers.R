@@ -255,7 +255,8 @@ intervention_no_switch <- function(data, trt) {
 #'   Coarser bins trade temporal resolution for speed.
 #' @param baseline character vector of baseline covariate names.
 #' @return list with wide data.frame, Y_cols, C_cols, baseline, n_bins.
-prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,
+prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,trt_var = "treatment",
+                              switch_var = "switch_time",
                               baseline = c("age", "sex_male", "ckd",
                                            "diabetes", "hypertension",
                                            "heart_failure")) {
@@ -289,17 +290,45 @@ prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,
     }
     v
   }
+  
+  
 
+# JOY: UPDATE
+# In addition to Ynodes and Cnodes, we need to have Anodes so that we can
+#incorporate the no-switching intervention
+    
+    # Function to create one subject's treatment path
+    make_A <- function(a0, sw_time) {
+      # Start with baseline treatment in every bin
+      A <- rep(as.integer(a0), n_bins)
+      
+      # If switch happens before tau, flip treatment after switch
+      if (is.finite(sw_time) && sw_time < tau) {
+        # first bin whose right endpoint is > switch_time
+        sw_bin <- which(bin_edges[-1] > sw_time)[1]
+        
+        if (!is.na(sw_bin) && sw_bin <= n_bins) {
+          A[seq(sw_bin, n_bins)] <- 1L - as.integer(a0)
+        }
+      }
+      A
+    }
+    
+  A_mat <- t(mapply(make_A, dat[[trt_var]], dat[[switch_var]]))
   Y_mat <- t(mapply(make_Y, dat$time_to_aki, dat$aki_event))
   C_mat <- t(mapply(make_C, dat$time_to_cens, dat$cens_event))
 
+  A_cols <- paste0("A", seq_len(n_bins))
   Y_cols <- paste0("Y", seq_len(n_bins))
   C_cols <- paste0("C", seq_len(n_bins))
+  
   colnames(Y_mat) <- Y_cols
   colnames(C_mat) <- C_cols
-
+  colnames(A_mat) <- A_cols
+  
   wide <- bind_cols(
     dat %>% select(id, treatment, all_of(baseline)),
+    as_tibble(A_mat),
     as_tibble(Y_mat),
     as_tibble(C_mat)
   )
@@ -307,7 +336,7 @@ prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,
   # Carry forward: once Y=1, all subsequent Y must be 1
   wide <- lmtp::event_locf(as.data.frame(wide), outcomes = Y_cols)
 
-  list(data = as.data.frame(wide), Y_cols = Y_cols, C_cols = C_cols,
+  list(data = as.data.frame(wide),A_cols= A_cols, Y_cols = Y_cols, C_cols = C_cols,
        baseline = baseline, n_bins = n_bins, bin_width = bin_width)
 }
 
@@ -337,7 +366,8 @@ run_lmtp_analysis <- function(lmtp_prep,
 
   common_args <- list(
     data    = lmtp_prep$data,
-    trt     = "treatment",
+    trt     =lmtp_prep$A_cols,
+    #trt     = "treatment",
     outcome = lmtp_prep$Y_cols,
     cens    = lmtp_prep$C_cols,
     baseline = lmtp_prep$baseline,

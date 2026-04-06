@@ -18,7 +18,7 @@ TODO(Joy): decide whether to include the time-dependent Cox model in the
 
 In post-marketing safety studies, the question "Does this drug increase the risk of adverse events?" cannot be answered without first specifying how intercurrent events---treatment switching, discontinuation, death from other causes---are handled. The ICH E9(R1) addendum formalises this requirement through the estimand framework: five elements (population, treatment, outcome, intercurrent events, and strategy) must be specified before analysis. Different strategies for handling the same intercurrent event define different estimands, and different estimands require compatible estimators.
 
-This chapter examines whether conventional regression analyses succeed in estimating the stated estimand when treatment switching is present. We focus on two estimands---the treatment-policy and hypothetical no-switch strategies---because they most clearly illustrate the consequences of using a mismatched estimator. Three additional ICH E9(R1) strategies (while-on-treatment, composite, and principal stratum) are defined for context and included in the simulation, but receive less detailed treatment. A simulated hepatitis B safety study provides the running example throughout.
+This chapter examines whether conventional regression analyses succeed in estimating the stated estimand when treatment switching is present. We focus on two estimands---the treatment-policy and hypothetical no-switch strategies---because they most clearly illustrate the consequences of using a mismatched estimator i.e having an estimator that does not target the intended causal estimand. Three additional ICH E9(R1) strategies (while-on-treatment, composite, and principal stratum) are defined for context and included in the simulation, but receive less detailed treatment. A simulated hepatitis B safety study provides the running example throughout.
 
 The analysis follows the causal roadmap for real-world evidence generation (Dang et al. 2023; Petersen 2014), which proceeds through defining the causal question, specifying a causal model, assessing identifiability, defining the statistical estimand, choosing an estimator, and conducting sensitivity analyses. This chapter concentrates on defining estimands, diagnosing empirical support, and comparing estimators.
 
@@ -70,12 +70,19 @@ if (length(missing) > 0) {
 
 We use a simulated post-marketing safety study comparing two hepatitis B antiviral regimens for the risk of renal failure. The setting draws on concerns about nephrotoxicity in tenofovir-containing regimens relative to entecavir-based alternatives.
 
-The simulated cohort includes an active regimen (analogous to tenofovir) and a comparator (analogous to entecavir), with confounded treatment assignment driven by baseline CKD, cirrhosis, and age. The primary intercurrent event is informative treatment switching: patients on the active regimen who develop early renal signals may switch to the comparator. Because CKD drives both switching and renal failure, switching is informative---the patients who switch are those at greatest risk.
+The simulated cohort includes an active regimen (analogous to tenofovir) and a comparator (analogous to entecavir), with confounded treatment assignment driven by baseline CKD, cirrhosis, and age. The primary intercurrent event is informative treatment switching: patients on the active regimen who develop early renal signals may switch to the comparator. Because CKD drives both switching and renal failure, switching is informative---the patients who switch are those at greatest risk of renal failue.
 
 Baseline confounders include demographics (age, sex, race), comorbidities (CKD, diabetes, hypertension, cirrhosis, heart failure), and co-medications (NSAIDs, ACE/ARBs, statins). The outcome is time to renal failure observed over a 180-day risk window.
 
 <!-- TODO(Joy): add one paragraph with real-data references if a project-approved
      example from the hepatitis B nephrotoxicity literature is available. -->
+<!-- https://pmc.ncbi.nlm.nih.gov/articles/PMC6589741/, https://www.ijidonline.com/article/S1201-9712%2822%2900519-7/,https://www.ijidonline.com/article/S1201-9712%2822%2900519-7/,https://pubmed.ncbi.nlm.nih.gov/34822056/ -->
+
+  A real-world clinical example motivating our  simulation study comes from the chronic hepatitis B nephrotoxicity literature comparing first-line antivirals tenofovir disoproxil fumarate (TDF) and entecavir (ETV). Several observational cohort studies and meta-analyses have evaluated renal safety of these agents because TDF can cause proximal tubular toxicity and decline in kidney function during long-term therapy [refs] A systematic review comparing TDF and ETV reported that TDF treatment was associated with greater increases in serum creatinine and reductions in estimated glomerular filtration rate during the first 6–24 months of therapy relative to ETV, although the magnitude of the effect was generally modest ( Lee et al,2019). Real-world cohort studies similarly report a higher risk of kidney function decline among patients receiving TDF compared with ETV during early follow-up, particularly among individuals with baseline renal risk factors (Jung at al,2022,Mak et a1,2022).
+  
+  These findings suggest a pattern in which tenofovir may produce a modestly elevated early renal risk that attenuates over longer follow-up rather than reversing in favor of tenofovir. The simulation study therefore incorporates a non-proportional treatment effect structure with an early hazard ratio greater than one for tenofovir versus entecavir and a later hazard ratio closer to the null, reflecting the empirical pattern observed in the hepatitis B renal-safety literature.
+
+<!-- severe kidney outcomes such as kidney failure, RRT are more rare compared to milder renal impairment measures such as decline in eGFR rate, CKD stage progression, serum creatinine levels, AKI events so moost studies report these. Literature, does not support a later protective effect -->
 
 ## The Data-Generating Process
 
@@ -287,6 +294,37 @@ We estimate marginal 180-day risks under static interventions: set $A = 1$ (acti
 
 <!-- TODO(Joy): finalise the intervention function for the hypothetical
      no-switch estimand in the longitudinal LMTP setup. -->
+     
+```{r}
+  SL_LIBRARY <- c("SL.mean", "SL.glm", "SL.bayesglm")
+  lmtp_res1 <- run_lmtp_analysis(lmtp_prep, folds = 2,
+                                learners = SL_LIBRARY)
+  rd1<-lmtp_res1$contrast_rd$estimates
+  rr1<-lmtp_res1$contrast_rr$estimates
+```
+
+     
+     
+```{r}
+#| label: tbl-lmtp-results
+#| tbl-cap: "LMTP estimates from a single simulated dataset (N = 10,000) with hpothetical no switch"
+#| echo: false
+
+lmtp_tbl1 <- tibble::tibble(
+  Quantity = c("Risk difference", "Risk ratio"),
+  Estimate = c(round(rd1$estimate, 5), round(rr1$estimate, 4)),
+  `95% CI` = c(
+    paste0(round(rd1$conf.low, 5), " to ", round(rd1$conf.high, 5)),
+    paste0(round(rr1$conf.low, 4), " to ", round(rr1$conf.high, 4))
+  )
+)
+kable(lmtp_tbl1, format = "pipe")
+```
+
+     
+     
+     
+     
 
 ```{r}
 #| label: lmtp-run
@@ -323,7 +361,7 @@ The Cox HR and the LMTP risk difference are not comparable as competing answers 
 
 The current analysis uses `SL.mean`, `SL.glm`, and `SL.bayesglm` with 2-fold cross-validation. For production analyses, the Super Learner library should include at minimum a parametric model, a penalised regression, and one flexible learner (Gruber et al. 2022). The number of CV folds should be calibrated to the effective sample size. The SDR estimator respects model bounds (survival probabilities remain in $[0,1]$), an advantage over inverse-probability weighting in sparse data.
 
-<!-- TODO(Joy): benchmark runtime with a richer SL library. -->
+<!-- TODO(Joy): benchmark runtime with a richer SL library. Need to finalize details of the simulations including DGP parameters before we can run simulations and put a time-stamp on them. I need to verify if the number of folds was based on effective sample size -->
 
 ## Known Truth from the DGP
 
@@ -592,3 +630,6 @@ These results also highlight two limitations. LMTP performance depends on the te
 - Stensrud MJ, Aalen JM, Aalen OO, Valberg M (2019). Limitations of hazard ratios in clinical trials. *Eur Heart J.*
 - Rufibach K (2019). Treatment effect quantification for time-to-event endpoints. *Pharm Stat.*
 - Petersen ML (2014). Applying a causal road map in settings with time-dependent confounding. *Epidemiology.*
+-Izzedine H, Launay-Vacher V, Deray G. Antiviral drug-induced nephrotoxicity. Am J Kidney Dis. 2005;45:804–817.
+-Perazella MA. Tenofovir-induced kidney disease: an acquired renal tubular mitochondriopathy. Kidney Int. 2010;78:1060–1063
+-Kohler JJ, Hosseini SH, Hoying-Brandt A, et al. Tenofovir renal toxicity targets mitochondria of renal proximal tubules. Lab Invest. 2009;89:513–519
