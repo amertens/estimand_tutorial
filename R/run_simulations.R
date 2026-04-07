@@ -188,17 +188,20 @@ run_one_iter <- function(i, estimand = "treatment_policy",
       })
 
       if ("never_switcher" %in% names(dat)) {
-        results[["lmtp_true_ps"]] <- tryCatch({
-          sub <- dat[dat$never_switcher == 1, ]
-          n_events <- sum(sub$event == 1 & sub$follow_time <= tau)
-          if (n_events < 5) stop("Too few events: ", n_events)
-          prep <- prepare_lmtp_data(sub, tau = tau, bin_width = bin_width)
-          res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
-          extract_lmtp(res, "LMTP SDR (true PS)")
-        }, error = function(e) {
-          data.frame(method = "LMTP SDR (true PS)", hr = NA, ci_low = NA,
-                     ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
-        })
+        results[["lmtp_true_ps"]] <- tryCatch(
+          suppressWarnings({
+            sub <- dat[dat$never_switcher == 1, ]
+            n_events <- sum(sub$event == 1 & sub$follow_time <= tau)
+            if (n_events < 5) stop("Too few events: ", n_events)
+            prep <- prepare_lmtp_data(sub, tau = tau, bin_width = bin_width)
+            res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+            extract_lmtp(res, "LMTP SDR (true PS)")
+          }),
+          error = function(e) {
+            data.frame(method = "LMTP SDR (true PS)", hr = NA, ci_low = NA,
+                       ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
+          }
+        )
       }
 
     } else {

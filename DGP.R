@@ -8,7 +8,7 @@ generate_hep_data <- function(
     ## baseline hazard parameters
     h0              = 5e-4,
     HR_early        = 1.30,        # TDF vs ETV early HR (first tau days)
-    HR_late         = 1.05,        # TDF vs ETV late HR (attenuates, not protective)
+    HR_late         = 0.90,        # TDF vs ETV late HR (attenuates; modest reversal)
     tau             = 90,          # change-point for non-PH (days)
     max_follow      = 720,         # admin cut-off (days)
     ## behaviour toggles
