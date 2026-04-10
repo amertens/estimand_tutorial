@@ -241,6 +241,52 @@ cox_tbl <- tibble::tibble(
 kable(cox_tbl, format = "pipe")
 ```
 
+```{r}
+#| label: fig-km-curves
+#| fig-cap: "Unadjusted Kaplan-Meier survival curves by treatment arm. Left: full follow-up (treatment-policy). Right: censored at switch."
+#| fig-height: 4
+#| fig-width: 10
+
+library(survminer)
+par(mfrow = c(1, 2))
+
+# KM: treatment-policy (no censor at switch)
+dat_km <- dat %>%
+  mutate(time_use = pmin(follow_time, tau),
+         event_use = as.integer(event == 1 & follow_time <= tau))
+sf_naive <- survfit(Surv(time_use, event_use) ~ treatment, data = dat_km)
+
+# KM: censor at switch
+dat_cs <- dat %>%
+  mutate(
+    time_cs = pmin(follow_time, tau),
+    event_cs = as.integer(event == 1 & follow_time <= tau)
+  )
+if ("switch_time" %in% names(dat_cs)) {
+  sw_before <- dat_cs$switched == 1 & dat_cs$switch_time < dat_cs$time_cs
+  dat_cs$time_cs[sw_before]  <- pmin(dat_cs$switch_time[sw_before], tau)
+  dat_cs$event_cs[sw_before] <- 0L
+}
+sf_cs <- survfit(Surv(time_cs, event_cs) ~ treatment, data = dat_cs)
+
+km_combined <- list(
+  "Full follow-up" = sf_naive,
+  "Censored at switch" = sf_cs
+)
+
+p_km <- ggsurvplot_list(
+  km_combined,
+  data = dat_km,
+  risk.table = FALSE,
+  conf.int = TRUE,
+  palette = c("steelblue", "tomato"),
+  legend.labs = c("Comparator", "Active"),
+  xlab = "Days", ylab = "Survival probability",
+  ggtheme = theme_minimal(base_size = 11)
+)
+arrange_ggsurvplots(p_km, ncol = 2)
+```
+
 The baseline-treatment Cox model ignores switching and is often interpreted as a treatment-policy analysis. Under non-proportional hazards, however, the Cox HR is a weighted average of time-specific hazard ratios, and the weights depend on the censoring distribution (Rufibach 2018). When CKD confounds both treatment and the outcome, the unadjusted KM risk difference reflects confounding rather than a causal contrast.
 
 The censor-at-switch model is sometimes used to approximate a hypothetical or while-on-treatment analysis. It assumes that switching is non-informative given baseline covariates. In this DGP, CKD drives both switching and renal failure, so the assumption is violated: censoring selectively removes high-risk person-time from the active arm.
@@ -284,7 +330,7 @@ kable(lmtp_tbl, format = "pipe")
 
 The LMTP analysis sets baseline treatment to active ($A = 1$) or comparator ($A = 0$) for all subjects and estimates marginal 180-day risks under each intervention. Follow-up is discretised into biweekly bins (13 time points). The current Super Learner library includes `SL.mean`, `SL.glm`, and `SL.bayesglm` with 2-fold cross-validation; production analyses should use a richer library and more folds (Gruber et al. 2022).
 
-Two important qualifications apply. First, the LMTP analysis as implemented here uses static baseline interventions and a censoring model that adjusts for informative censoring (including switching-induced follow-up loss). It provides a marginal risk contrast that is better aligned with the treatment-policy estimand than any of the Cox approaches, but the degree of alignment depends on correct specification of the censoring and outcome models. Second, a fully distinct LMTP analysis for the hypothetical no-switch estimand would require an intervention function that sets treatment at all post-baseline time points to the baseline value, preventing switching. The current implementation uses the same static baseline intervention for both strategies, and the two estimands are distinguished by generating data under different DGP policies rather than by different LMTP intervention specifications. This is an acknowledged limitation.
+For the treatment-policy estimand, LMTP models treatment as time-fixed at baseline; the censoring model adjusts for informative follow-up loss due to switching. For the no-switch and while-on-treatment estimands, treatment is modelled as time-varying (one column per bin reflecting observed switching), and the static binary intervention holds treatment constant across all bins---directly implementing the "no switching" counterfactual within the LMTP framework. The degree of alignment in each case depends on correct specification of the censoring and outcome models.
 
 ## Empirical Support Diagnostics {#sec-support}
 
@@ -441,15 +487,45 @@ sim_supp <- sim_summaries %>%
 kable(sim_supp, digits = 4, format = "pipe")
 ```
 
+```{r}
+#| label: fig-sim-supp
+#| fig-cap: "Distribution of risk difference estimates for supplementary estimands (20 iterations). Dashed line: true RD."
+#| fig-height: 5
+#| fig-width: 9
+
+sim_plot_supp <- sim_results %>%
+  filter(converged, !is.na(risk_diff),
+         !estimand %in% c("treatment_policy", "no_switch")) %>%
+  mutate(estimand_label = estimand_labels[estimand])
+
+truth_supp <- tibble(
+  estimand_label = unname(estimand_labels[c("while_on_treatment", "composite",
+                                             "principal_stratum")]),
+  xint = c(truth_all$while_on_treatment$true_rd,
+           truth_all$composite$true_rd,
+           truth_all$principal_stratum$true_rd))
+
+if (nrow(sim_plot_supp) > 0) {
+  ggplot(sim_plot_supp, aes(x = risk_diff, fill = method)) +
+    geom_histogram(alpha = 0.6, bins = 15, position = "identity") +
+    facet_wrap(~ estimand_label, scales = "free_x") +
+    geom_vline(data = truth_supp,
+               aes(xintercept = xint), linetype = "dashed", color = "red") +
+    labs(x = "Risk difference", y = "Count", fill = "Estimator") +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "bottom")
+}
+```
+
 ## Discussion
 
 The simulation illustrates two distinct sources of estimand--estimator mismatch in the presence of informative switching.
 
-The first is confounding bias. The baseline-treatment Cox model and unadjusted KM risk differences consistently overestimate the treatment effect across all strategies, with 0% coverage in every case. CKD confounds both treatment assignment and renal failure, and the Cox model's conditional HR does not correspond to the marginal risk contrast defined by either the treatment-policy or hypothetical estimand. This is not a deficiency specific to the Cox model; it reflects the use of an estimator that does not adjust adequately for confounding and does not target the intended parameter.
+The first is confounding bias. CKD confounds both treatment assignment and renal failure, so the unadjusted Cox HR and KM risk difference overestimate the treatment effect (see simulation tables above). The Cox model's conditional HR does not correspond to the marginal risk contrast defined by either the treatment-policy or hypothetical estimand. This reflects the use of an estimator that does not adjust adequately for confounding and does not target the intended parameter.
 
-The second source of mismatch is how switching is handled. The censor-at-switch Cox analysis selectively removes high-risk person-time, attenuating the apparent treatment effect relative to the baseline-treatment model. The degree of attenuation increases with switching intensity: under poor support (~67% switching), the censor-at-switch HR diverges substantially from the naive HR. Neither Cox analysis distinguishes between the treatment-policy and no-switch estimands in a principled way; both estimate conditional hazard ratios that do not correspond to either marginal target.
+The second source of mismatch is how switching is handled. The censor-at-switch Cox analysis selectively removes high-risk person-time, attenuating the apparent treatment effect relative to the baseline-treatment model. The degree of attenuation increases with switching intensity, as shown in the support diagnostic section. Neither Cox analysis distinguishes between the treatment-policy and no-switch estimands in a principled way.
 
-LMTP estimates are less biased than the Cox analyses for the treatment-policy and no-switch strategies, with coverage reaching 75--85% for the near-null no-switch truth. Coverage for the treatment-policy strategy is lower (approximately 35%), reflecting residual bias that likely arises from the combination of coarse time discretisation (biweekly bins), a minimal Super Learner library, and a sparse event rate. The LMTP analysis provides a marginal risk contrast that is better aligned with the intervention-defined estimand than any of the Cox approaches, but it does not fully recover the truth under the current specification.
+LMTP targets a marginal risk contrast more closely aligned with the intervention-defined estimand. The degree of alignment and the residual finite-sample bias depend on the temporal resolution of the time bins, the flexibility of the Super Learner library, and the event rate. Under the current specification (biweekly bins, `SL.mean` + `SL.glm` + `SL.bayesglm`, 2-fold CV), some residual bias is expected. Coverage and bias values should be interpreted in light of the limited number of simulation iterations (20) and the minimal learner library.
 
 ### Sensitivity to unmeasured confounding
 
@@ -483,6 +559,9 @@ Biweekly time bins and a minimal Super Learner library (`SL.mean`, `SL.glm`, `SL
 - Stensrud MJ, Aalen JM, Aalen OO, Valberg M (2019). Limitations of hazard ratios in clinical trials. *Eur Heart J.*
 - Rufibach K (2019). Treatment effect quantification for time-to-event endpoints. *Pharm Stat.*
 - Petersen ML (2014). Applying a causal road map in settings with time-dependent confounding. *Epidemiology.*
--Izzedine H, Launay-Vacher V, Deray G. Antiviral drug-induced nephrotoxicity. Am J Kidney Dis. 2005;45:804–817.
--Perazella MA. Tenofovir-induced kidney disease: an acquired renal tubular mitochondriopathy. Kidney Int. 2010;78:1060–1063
--Kohler JJ, Hosseini SH, Hoying-Brandt A, et al. Tenofovir renal toxicity targets mitochondria of renal proximal tubules. Lab Invest. 2009;89:513–519
+- Izzedine H, Launay-Vacher V, Deray G (2005). Antiviral drug-induced nephrotoxicity. *Am J Kidney Dis.* 45:804--817.
+- Perazella MA (2010). Tenofovir-induced kidney disease. *Kidney Int.* 78:1060--1063.
+- Kohler JJ, et al. (2009). Tenofovir renal toxicity targets mitochondria of renal proximal tubules. *Lab Invest.* 89:513--519.
+- Lee SW, et al. (2019). Tenofovir vs entecavir on renal function. Systematic review.
+- Jung CY, et al. (2022). Kidney function decline with TDF vs ETV in chronic hepatitis B. *Int J Infect Dis.*
+- Mak LY, et al. (2022). Renal safety of tenofovir in chronic hepatitis B.

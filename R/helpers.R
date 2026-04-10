@@ -340,8 +340,15 @@ prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,trt_var = "treatment
   # Carry forward: once Y=1, all subsequent Y must be 1
   wide <- lmtp::event_locf(as.data.frame(wide), outcomes = Y_cols)
 
-  list(data = as.data.frame(wide),A_cols= A_cols, Y_cols = Y_cols, C_cols = C_cols,
-       baseline = baseline, n_bins = n_bins, bin_width = bin_width)
+  # Include baseline treatment in the adjustment set when using time-varying
+  # A_cols as trt (LMTP needs to adjust for baseline confounders including
+  # the initial treatment assignment).
+  baseline_out <- if (!"treatment" %in% baseline) c("treatment", baseline)
+                  else baseline
+
+  list(data = as.data.frame(wide), A_cols = A_cols, Y_cols = Y_cols,
+       C_cols = C_cols, baseline = baseline_out, n_bins = n_bins,
+       bin_width = bin_width)
 }
 
 
