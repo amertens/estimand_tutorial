@@ -66,23 +66,26 @@ run_one_iter <- function(i, estimand = "treatment_policy",
   }
   dat_raw <- do.call(generate_hep_data, args)
 
-  # Apply estimand-specific outcome/censoring definition
+  # Apply estimand-specific outcome/censoring definition for Cox analyses.
+  # LMTP uses dat_raw (or dat_raw subsets) directly — it handles switching
+  # through its own treatment/censoring model, not through pre-derived
+  # follow_time/event columns.
   if (estimand %in% c("while_on_treatment", "composite")) {
-    dat <- derive_estimand(dat_raw, estimand)
+    dat_cox <- derive_estimand(dat_raw, estimand)
   } else {
-    dat <- dat_raw  # treatment_policy, no_switch, principal_stratum
+    dat_cox <- dat_raw
   }
 
   covars <- intersect(
     c("age", "ckd", "cirrhosis", "diabetes", "heart_failure"),
-    names(dat)
+    names(dat_raw)
   )
 
   results <- list()
 
   # ── A. Naive Cox (ignores switching) ──
   results[["cox_naive"]] <- tryCatch({
-    fit <- fit_cox_naive(dat, tau = tau, covars = covars)
+    fit <- fit_cox_naive(dat_cox, tau = tau, covars = covars)
     km  <- km_risk_at(fit$survfit, t = tau)
     km_rr <- if (km$risk_ctrl > 0) km$risk_trt / km$risk_ctrl else NA_real_
     data.frame(
@@ -97,7 +100,7 @@ run_one_iter <- function(i, estimand = "treatment_policy",
 
   # ── B. Cox censor at switch ──
   results[["cox_censor"]] <- tryCatch({
-    fit <- fit_cox_censor_switch(dat, tau = tau, covars = covars)
+    fit <- fit_cox_censor_switch(dat_cox, tau = tau, covars = covars)
     km  <- km_risk_at(fit$survfit, t = tau)
     km_rr <- if (km$risk_ctrl > 0) km$risk_trt / km$risk_ctrl else NA_real_
     data.frame(
@@ -113,7 +116,7 @@ run_one_iter <- function(i, estimand = "treatment_policy",
   # ── C. Cox time-dependent treatment (optional) ──
   if (run_cox_td) {
     results[["cox_td"]] <- tryCatch({
-      fit <- fit_cox_td(dat, tau = tau, covars = covars)
+      fit <- fit_cox_td(dat_cox, tau = tau, covars = covars)
       data.frame(
         method = "Cox time-dependent", hr = fit$hr,
         ci_low = fit$ci_low, ci_high = fit$ci_high,
@@ -162,10 +165,12 @@ run_one_iter <- function(i, estimand = "treatment_policy",
 
     if (estimand %in% c("no_switch", "while_on_treatment")) {
       # ── Time-varying treatment: intervention holds A constant ──
+      # Use dat_raw (not dat_cox) so LMTP sees the actual switching pattern
+      # in the A columns and handles censoring through its own model.
       results[["lmtp"]] <- tryCatch({
-        n_events <- sum(dat$event == 1 & dat$follow_time <= tau)
+        n_events <- sum(dat_raw$event == 1 & dat_raw$follow_time <= tau)
         if (n_events < 5) stop("Too few events: ", n_events)
-        prep <- prepare_lmtp_data(dat, tau = tau, bin_width = bin_width)
+        prep <- prepare_lmtp_data(dat_raw, tau = tau, bin_width = bin_width)
         res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
         extract_lmtp(res, "LMTP SDR (no-switch)")
       }, error = function(e) {
@@ -176,7 +181,7 @@ run_one_iter <- function(i, estimand = "treatment_policy",
     } else if (estimand == "principal_stratum") {
       # ── Two runs: observed non-switchers + true never-switchers ──
       results[["lmtp_approx"]] <- tryCatch({
-        sub <- dat[dat$switched == 0, ]
+        sub <- dat_raw[dat_raw$switched == 0, ]
         n_events <- sum(sub$event == 1 & sub$follow_time <= tau)
         if (n_events < 5) stop("Too few events: ", n_events)
         prep <- prepare_lmtp_data(sub, tau = tau, bin_width = bin_width)
@@ -187,10 +192,10 @@ run_one_iter <- function(i, estimand = "treatment_policy",
                    ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
       })
 
-      if ("never_switcher" %in% names(dat)) {
+      if ("never_switcher" %in% names(dat_raw)) {
         results[["lmtp_true_ps"]] <- tryCatch(
           suppressWarnings({
-            sub <- dat[dat$never_switcher == 1, ]
+            sub <- dat_raw[dat_raw$never_switcher == 1, ]
             n_events <- sum(sub$event == 1 & sub$follow_time <= tau)
             if (n_events < 5) stop("Too few events: ", n_events)
             prep <- prepare_lmtp_data(sub, tau = tau, bin_width = bin_width)
@@ -205,11 +210,14 @@ run_one_iter <- function(i, estimand = "treatment_policy",
       }
 
     } else {
-      # ── treatment_policy, composite: time-fixed treatment ──
+      # ── treatment_policy, composite ──
+      # For composite, use dat_cox (which has composite outcome definition).
+      # For treatment_policy, dat_raw and dat_cox are the same.
+      lmtp_dat <- if (estimand == "composite") dat_cox else dat_raw
       results[["lmtp"]] <- tryCatch({
-        n_events <- sum(dat$event == 1 & dat$follow_time <= tau)
+        n_events <- sum(lmtp_dat$event == 1 & lmtp_dat$follow_time <= tau)
         if (n_events < 5) stop("Too few events: ", n_events)
-        prep <- prepare_lmtp_data(dat, tau = tau, bin_width = bin_width)
+        prep <- prepare_lmtp_data(lmtp_dat, tau = tau, bin_width = bin_width)
         res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
         extract_lmtp(res, "LMTP SDR")
       }, error = function(e) {
