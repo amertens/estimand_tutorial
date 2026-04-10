@@ -187,7 +187,21 @@ kable(truth_summary, digits = 4, format = "pipe")
 
 The treatment-policy risk difference is positive: the active drug causes early harm (HR = 1.30 before day 90), and although switching to the comparator reduces the subsequent hazard, the accumulated early risk is not fully offset. Under the no-switch strategy, where patients remain on their assigned treatment for the full 180 days, the risk difference reflects the full non-proportional hazard structure (HR = 1.30 early, HR = 0.90 late). Because the late-period hazard ratio falls below 1, sustained treatment without switching partially offsets the early harm, yielding a smaller no-switch risk difference than the treatment-policy difference. The composite strategy produces the largest risk difference because the active arm experiences substantially more switching, and switching itself counts as an event.
 
-The while-on-treatment truth differs from the no-switch truth because it conditions on not switching before 180 days. Under counterfactual uniform treatment (all-treated or all-control), non-switchers are a selected subpopulation whose switching hazard exceeded 180 days---a subset that tends to be lower-risk. The principal stratum further restricts to patients who would not switch under *either* treatment assignment; this latent subgroup shows a near-null effect.
+The while-on-treatment truth differs from the no-switch truth because it conditions on not switching before 180 days. Under counterfactual uniform treatment (all-treated or all-control), non-switchers are a selected subpopulation whose switching hazard exceeded 180 days---a subset that tends to be lower-risk. The principal stratum further restricts to patients who would not switch under *either* treatment assignment.
+
+### When would treatment-policy and no-switch truths diverge?
+
+In the current DGP, the treatment-policy and no-switch risk differences are nearly identical. This is because the post-switch hazard change is modest (from HR = 0.90 to HR = 1.0 for active-to-comparator switchers) and switching rates are moderate (~12%). The population-level impact of switching on 180-day risk is therefore small.
+
+The two estimands would diverge meaningfully in settings where switching has a large direct effect on subsequent outcomes. Consider an alternative DGP with the following features:
+
+- **High switching rate:** 30--40% of patients on the active drug switch to the comparator within 180 days, driven by early toxicity signals.
+- **Large post-switch hazard change:** The active drug has a sustained high hazard (e.g., HR = 2.0) that drops to the comparator's baseline rate (HR = 1.0) immediately upon switching. Switching effectively "rescues" high-risk patients.
+- **Directional switching:** Switching is predominantly from active to comparator (not bidirectional), so the rescue effect is asymmetric across arms.
+
+Under these conditions, the treatment-policy estimand would show a smaller risk difference than the no-switch estimand, because switching mitigates accumulated harm in the active arm. A substantial fraction of active-arm patients would avoid the event by switching early, reducing the treatment-policy risk. The no-switch estimand, by contrast, would force all active-arm patients to remain on the harmful treatment for the full follow-up, producing a larger risk difference.
+
+This pattern---where the treatment-policy effect is attenuated relative to the no-switch effect---is common in oncology trials with treatment crossover. Patients randomised to control who cross over to the experimental treatment upon progression experience delayed outcomes, reducing the observed treatment-policy survival difference relative to what would have been observed without crossover (Latimer et al. 2014). The hepatitis B setting studied here produces a smaller TP--NS gap because the hazard change upon switching is modest and the switching rate is moderate, but the conceptual distinction remains important for interpreting the clinical question each estimand addresses.
 
 ## Estimand Framework
 
@@ -565,3 +579,4 @@ Biweekly time bins and a minimal Super Learner library (`SL.mean`, `SL.glm`, `SL
 - Lee SW, et al. (2019). Tenofovir vs entecavir on renal function. Systematic review.
 - Jung CY, et al. (2022). Kidney function decline with TDF vs ETV in chronic hepatitis B. *Int J Infect Dis.*
 - Mak LY, et al. (2022). Renal safety of tenofovir in chronic hepatitis B.
+- Latimer NR, et al. (2014). Adjusting survival time estimates to account for treatment switching in randomized controlled trials. *Stat Methods Med Res.* 23:324--348.
