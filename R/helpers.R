@@ -231,6 +231,30 @@ static_binary_off <- function(data, trt) {
   rep(0L, nrow(data))
 }
 
+#JOY :UPDATE (TREATMENT POLICY ESTIMAND)
+# In the current longitudinal setup, the static_binary_on vs off does not correspond to
+# the treatment policy estimand. We want the effect of starting TDF vs ETV regardless 
+# what happens at later time points. In that case we define a shifted dataset, where
+# we intervene to set A1=1 for all vs A1=0 ignoring the other timepoints
+
+
+make_shifted_baseline <- function(data, baseline_trt, value, C_cols = NULL) {
+  shifted <- data
+  
+  # Intervene only on baseline treatment
+  shifted[[baseline_trt]] <- value
+  
+  # Required for lmtp when using shifted= in survival settings
+  if (!is.null(C_cols)) {
+    for (cc in C_cols) {
+      shifted[[cc]] <- 1
+    }
+  }
+  
+  shifted
+}
+
+
 # TODO(Joy): finalise the no_switch intervention function for the
 #   hypothetical estimand in the longitudinal (person-period) LMTP setup.
 #   The function below is a placeholder for the case where treatment is
@@ -243,11 +267,20 @@ static_binary_off <- function(data, trt) {
 #' @param data data.frame with treatment column.
 #' @param trt character; name of the treatment variable at the current time.
 #' @return vector of treatment values equal to baseline treatment.
+
 intervention_no_switch <- function(data, trt) {
+  
+  
   # In the current setup, treatment is time-fixed at baseline.
   # This function preserves that value across all time points.
   data[["treatment"]]
+ 
 }
+
+
+#JOY: Agreed with Andrew that intervention_no_switch estimand is the static_binary_on
+# vs static_binary_off and hence already implemented. 
+
 
 
 # ── LMTP data preparation ───────────────────────────────────────────────────
@@ -364,19 +397,73 @@ prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,trt_var = "treatment
 #'   For production: c("SL.glm", "SL.glmnet", "SL.xgboost") at minimum.
 #'   Tutorial default is SL.glm only for speed.
 #' @return list with res_on, res_off, risk_trt, risk_ctrl, contrast_rr, contrast_rd.
+#' 
+#' 
+#JOY: UPDATE: I commented out the previous "run_lmtp_analysis" and wrote an updated 
+# one implementing the "treatment policy" and the "hypothetical no_switch" estimand".
+#  Need to implement the "while-on-treatment" and,composite and principal stratum 
+#estimands. 
+
+# run_lmtp_analysis <- function(lmtp_prep,
+#                               shift_on  = NULL,
+#                               shift_off = NULL,
+#                               folds = 2,
+#                               learners = c("SL.glm")) {
+#   requireNamespace("lmtp", quietly = TRUE)
+# 
+#   if (is.null(shift_on))  shift_on  <- lmtp::static_binary_on
+#   if (is.null(shift_off)) shift_off <- lmtp::static_binary_off
+# 
+#   # Use time-varying treatment columns if available (from prepare_lmtp_data_tv)
+#   trt_spec <- if (!is.null(lmtp_prep$A_cols)) lmtp_prep$A_cols else "treatment"
+# 
+#   common_args <- list(
+#     data    = lmtp_prep$data,
+#     trt     = trt_spec,
+#     outcome = lmtp_prep$Y_cols,
+#     cens    = lmtp_prep$C_cols,
+#     baseline = lmtp_prep$baseline,
+#     outcome_type = "survival",
+#     folds   = folds,
+#     learners_trt     = learners,
+#     learners_outcome = learners
+#   )
+# 
+#   res_on  <- do.call(lmtp::lmtp_sdr,
+#                      c(common_args, list(shift = shift_on)))
+#   res_off <- do.call(lmtp::lmtp_sdr,
+#                      c(common_args, list(shift = shift_off)))
+# 
+#   contrast_rr <- lmtp::lmtp_contrast(res_on, ref = res_off, type = "rr")
+#   contrast_rd <- lmtp::lmtp_contrast(res_on, ref = res_off, type = "additive")
+# 
+#   list(
+#     res_on      = res_on,
+#     res_off     = res_off,
+#     risk_trt    = 1 - res_on$theta[length(res_on$theta)],
+#     risk_ctrl   = 1 - res_off$theta[length(res_off$theta)],
+#     contrast_rr = contrast_rr,
+#     contrast_rd = contrast_rd
+#   )
+# }
+
+
 run_lmtp_analysis <- function(lmtp_prep,
                               shift_on  = NULL,
                               shift_off = NULL,
+                              add_baseline_only = FALSE,
                               folds = 2,
                               learners = c("SL.glm")) {
   requireNamespace("lmtp", quietly = TRUE)
-
+  
   if (is.null(shift_on))  shift_on  <- lmtp::static_binary_on
   if (is.null(shift_off)) shift_off <- lmtp::static_binary_off
-
+  
   # Use time-varying treatment columns if available (from prepare_lmtp_data_tv)
   trt_spec <- if (!is.null(lmtp_prep$A_cols)) lmtp_prep$A_cols else "treatment"
-
+  
+   
+  
   common_args <- list(
     data    = lmtp_prep$data,
     trt     = trt_spec,
@@ -388,16 +475,17 @@ run_lmtp_analysis <- function(lmtp_prep,
     learners_trt     = learners,
     learners_outcome = learners
   )
-
+  
+  # Full always_on vs always_off
   res_on  <- do.call(lmtp::lmtp_sdr,
                      c(common_args, list(shift = shift_on)))
   res_off <- do.call(lmtp::lmtp_sdr,
                      c(common_args, list(shift = shift_off)))
-
+  
   contrast_rr <- lmtp::lmtp_contrast(res_on, ref = res_off, type = "rr")
   contrast_rd <- lmtp::lmtp_contrast(res_on, ref = res_off, type = "additive")
-
-  list(
+  
+ out<- list(
     res_on      = res_on,
     res_off     = res_off,
     risk_trt    = 1 - res_on$theta[length(res_on$theta)],
@@ -405,7 +493,72 @@ run_lmtp_analysis <- function(lmtp_prep,
     contrast_rr = contrast_rr,
     contrast_rd = contrast_rd
   )
+  
+ # Optional: baseline-only intervention
+ 
+  if(add_baseline_only){
+ baseline_trt <- lmtp_prep$A_cols[1]
+ 
+ shifted_baseline_on <- make_shifted_baseline(
+   data = lmtp_prep$data,
+   baseline_trt = baseline_trt,
+   value = 1,
+   C_cols = lmtp_prep$C_cols
+ )
+ 
+ 
+ shifted_baseline_off <- make_shifted_baseline(
+   data = lmtp_prep$data,
+   baseline_trt = baseline_trt,
+   value = 0,
+   C_cols = lmtp_prep$C_cols
+ )
+ 
+ res_baseline_on <- do.call(
+   lmtp::lmtp_sdr,
+   c(common_args, list(shifted = shifted_baseline_on, mtp = FALSE))
+ )
+ 
+ res_baseline_off <- do.call(
+   lmtp::lmtp_sdr,
+   c(common_args, list(shifted = shifted_baseline_off, mtp = FALSE))
+ )
+ 
+ 
+ 
+ res_baseline_on <- do.call(
+   lmtp::lmtp_sdr,
+   c(common_args, list(shifted = shifted_baseline_on, mtp = FALSE))
+ )
+ 
+ res_baseline_off <- do.call(
+   lmtp::lmtp_sdr,
+   c(common_args, list(shifted = shifted_baseline_off, mtp = FALSE))
+ )
+ 
+ 
+ out$res_baseline_on <- res_baseline_on
+ out$res_baseline_off <- res_baseline_off
+ 
+ out$risk_baseline_on <-
+   1 - res_baseline_on$theta[length(res_baseline_on$theta)]
+ out$risk_baseline_off <-
+   1 - res_baseline_off$theta[length(res_baseline_off$theta)]
+ 
+ out$contrast_rr_baseline_only <-
+   lmtp::lmtp_contrast(res_baseline_on, ref = res_baseline_off, type = "rr")
+ out$contrast_rd_baseline_only <-
+   lmtp::lmtp_contrast(res_baseline_on, ref = res_baseline_off, type = "additive")
 }
+ 
+ 
+ out
+}
+
+
+
+
+
 
 
 # ── Risk extraction utilities ────────────────────────────────────────────────
