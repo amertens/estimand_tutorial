@@ -28,7 +28,9 @@ source(here("DGP.R"))
 source(here("R", "helpers.R"))
 
 # Number of parallel workers. Set to 1 for serial (with progress bar).
-N_CORES <- 8L
+# Parallel (N_CORES > 1) requires all packages and functions available
+# on PSOCK workers. Use serial for reliability until parallel is debugged.
+N_CORES <- 1L
 
 # ── Single iteration for one estimand ────────────────────────────────────────
 #' Run one iteration of the simulation study for a specific estimand.
