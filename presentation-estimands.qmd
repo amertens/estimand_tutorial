@@ -2,10 +2,8 @@
 title: "Estimand–Estimator Alignment in Post-Authorization Safety Analyses"
 subtitle: "A causal roadmap approach to intercurrent events in time-to-event studies"
 author:
-  - name: "Andrew Mertens"
+  - name: "Joy Nakato"
     affiliation: "University of California, Berkeley"
-  - name: "Joy Shi"
-    affiliation: "Harvard T.H. Chan School of Public Health"
 date: today
 format:
   revealjs:
@@ -217,9 +215,9 @@ ggdag(dag, text = FALSE, use_labels = "label", text_size = 4,
 Key: W (especially CKD) is a common cause of treatment assignment, switching, kidney function, and AKI. Switching is driven by evolving kidney function, making it informative. Conditioning on post-treatment variables (switching, censoring) without adjustment can open collider paths.
 :::
 
-## Three estimands, one dataset {.smaller}
+## Five estimands, one dataset {.smaller}
 
-Different strategies for handling switching define different causal quantities — even with the same data.
+The ICH E9(R1) addendum defines five strategies for handling intercurrent events. Each defines a different causal quantity — even from the same data.
 
 ```{r}
 #| label: tbl-estimands
@@ -227,7 +225,7 @@ Different strategies for handling switching define different causal quantities �
 est_tbl <- tibble::tribble(
   ~Strategy, ~`Switching handled by`, ~`Target population`, ~`Interpretation`,
   "Treatment-policy",
-    "Included in follow-up (ignored)",
+    "Included in follow-up",
     "All initiators",
     "Real-world effect of initiating treatment, including downstream switching",
   "Hypothetical no-switch",
@@ -236,12 +234,20 @@ est_tbl <- tibble::tribble(
     "Effect if no patient could switch — isolates direct pharmacological effect",
   "While-on-treatment",
     "Censored at switch",
-    "Patients who remain on treatment",
-    "Effect during the period patients tolerate therapy"
+    "Patients remaining on treatment",
+    "Effect during the period patients tolerate therapy",
+  "Composite",
+    "Absorbed into outcome",
+    "All initiators",
+    "Risk of renal failure OR switching — conflates tolerability with safety",
+  "Principal stratum",
+    "Restricted to never-switchers",
+    "Latent subpopulation",
+    "Effect among patients who would not switch under either treatment"
 )
 
 kable(est_tbl, format = "pipe") |>
-  kableExtra::kable_styling(font_size = 14)
+  kableExtra::kable_styling(font_size = 13)
 ```
 
 . . .
@@ -249,7 +255,7 @@ kable(est_tbl, format = "pipe") |>
 Each answers a **different clinical question**. Choosing among them is a scientific decision, not a statistical one.
 
 ::: {.notes}
-Two additional strategies (composite and principal stratum) exist under ICH E9(R1) but are not covered in detail here. The three shown are the most commonly encountered in safety analyses.
+All five are implemented in the simulation. The primary comparison focuses on treatment-policy and no-switch. Composite and principal stratum are included for completeness but the current LMTP implementation does not provide well-matched estimators for them.
 :::
 
 ## True effects differ across estimands {.smaller}
