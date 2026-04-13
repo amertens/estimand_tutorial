@@ -442,15 +442,13 @@ The DGP is calibrated to the published hepatitis B nephrotoxicity literature. Tr
 ## Single-dataset results {.smaller}
 
 ```{r}
-#| label: fig-single-dataset
-#| fig-width: 10
-#| fig-height: 5
+#| label: tbl-single-dataset
 
-# Generate a single dataset and run all analyses
+# Load cached LMTP results (no live simulation in the presentation)
+# Cox fits are fast enough to run inline
 set.seed(2026)
 dat <- generate_hep_data(N = 10000, np_hazard = TRUE, dep_censor = TRUE,
                          complexity = TRUE, seed = 2026)
-
 tau <- 180
 covars <- c("age", "ckd", "cirrhosis", "diabetes", "heart_failure")
 
@@ -459,10 +457,8 @@ cox_cs <- fit_cox_censor_switch(dat, tau = tau, covars = covars)
 km_n   <- km_risk_at(cox_n$survfit, t = tau)
 km_cs  <- km_risk_at(cox_cs$survfit, t = tau)
 
-# Build comparison
 results_single <- tibble(
-  Analysis = c("Cox (baseline trt)", "Cox (censor at switch)",
-               "LMTP SDR"),
+  Analysis = c("Cox (baseline trt)", "Cox (censor at switch)", "LMTP SDR"),
   Scale = c("HR", "HR", "RD"),
   Estimate = c(round(cox_n$hr, 3), round(cox_cs$hr, 3),
                if (has_lmtp) round(lmtp_res$contrast_rd$estimates$estimate, 4) else NA),
@@ -484,6 +480,62 @@ Do not compare the Cox HR and LMTP RD as though they estimate the same quantity.
 :::
 
 
+## Repeated simulation results {.smaller}
+
+```{r}
+#| label: fig-sim-results
+#| fig-width: 10
+#| fig-height: 5
+
+sim_cache <- here("results", "sim_study_main.rds")
+has_sim <- file.exists(sim_cache)
+
+if (has_sim && has_truth) {
+  source(here("R", "run_simulations.R"))
+  sim_results <- readRDS(sim_cache)
+
+  estimand_labels <- c(
+    treatment_policy = "Treatment-policy",
+    no_switch = "No-switch"
+  )
+
+  sim_plot <- sim_results %>%
+    filter(converged, !is.na(risk_diff),
+           estimand %in% c("treatment_policy", "no_switch")) %>%
+    mutate(estimand_label = estimand_labels[estimand])
+
+  truth_lines <- tibble(
+    estimand_label = c("Treatment-policy", "No-switch"),
+    xint = c(truth_all$treatment_policy$true_rd,
+             truth_all$no_switch$true_rd))
+
+  ggplot(sim_plot, aes(x = risk_diff, fill = method)) +
+    geom_histogram(alpha = 0.6, bins = 15, position = "identity") +
+    facet_wrap(~ estimand_label, scales = "free_x") +
+    geom_vline(data = truth_lines,
+               aes(xintercept = xint), linetype = "dashed", color = "red",
+               linewidth = 1) +
+    scale_fill_manual(values = pal[1:4]) +
+    labs(x = "Risk difference", y = "Count", fill = "Estimator",
+         title = "Distribution of RD estimates across 20 iterations (N = 10,000)",
+         subtitle = "Dashed line: true risk difference") +
+    theme(legend.position = "bottom")
+} else {
+  # Placeholder if simulation hasn't been run yet
+  ggplot() +
+    annotate("text", x = 0.5, y = 0.5,
+             label = "Simulation results pending\n\nRun source('R/run_cached_analyses.R')\nto generate sim_study_main.rds",
+             size = 6, color = "grey50") +
+    theme_void() +
+    labs(title = "Repeated simulation results")
+}
+```
+
+::: {.notes}
+This slide loads from cached simulation results. If the cache does not exist, a placeholder is shown. The simulation compares Cox naive, Cox censor-at-switch, and LMTP SDR across 20 iterations for the treatment-policy and no-switch estimands.
+:::
+
+
 ## Positivity and support {.smaller}
 
 Even an aligned estimator fails when the data do not support the target intervention.
@@ -493,27 +545,26 @@ Even an aligned estimator fails when the data do not support the target interven
 #| fig-width: 10
 #| fig-height: 5
 
-# Generate switching distributions under three scenarios
+# Small datasets for the switching probability illustration (fast, N=2000)
 set.seed(101)
-dat_good <- generate_hep_data(N = 5000, np_hazard = TRUE, dep_censor = TRUE,
-                               complexity = TRUE, seed = 101)
+dat_good_sm <- generate_hep_data(N = 2000, np_hazard = TRUE, dep_censor = TRUE,
+                                  complexity = TRUE, seed = 101)
 set.seed(103)
-dat_poor <- generate_hep_data(N = 5000, np_hazard = TRUE, dep_censor = TRUE,
-                               complexity = TRUE,
-                               gamma_A = 2.5, gamma_ckd = 2.0,
-                               lambda_sw0 = 1e-2, seed = 103)
+dat_poor_sm <- generate_hep_data(N = 2000, np_hazard = TRUE, dep_censor = TRUE,
+                                  complexity = TRUE,
+                                  gamma_A = 2.5, gamma_ckd = 2.0,
+                                  lambda_sw0 = 1e-2, seed = 103)
 
-# Fit switching models
 sw_good <- glm(switched ~ age + ckd + treatment + cirrhosis,
-               data = dat_good, family = binomial)
+               data = dat_good_sm, family = binomial)
 sw_poor <- glm(switched ~ age + ckd + treatment + cirrhosis,
-               data = dat_poor, family = binomial)
+               data = dat_poor_sm, family = binomial)
 
 combined <- bind_rows(
-  dat_good %>% mutate(p_switch = predict(sw_good, type = "response"),
-                       Scenario = "Good support (~12% switching)"),
-  dat_poor %>% mutate(p_switch = predict(sw_poor, type = "response"),
-                       Scenario = "Poor support (~65% switching)")
+  dat_good_sm %>% mutate(p_switch = predict(sw_good, type = "response"),
+                          Scenario = "Good support (~12% switching)"),
+  dat_poor_sm %>% mutate(p_switch = predict(sw_poor, type = "response"),
+                          Scenario = "Poor support (~65% switching)")
 ) %>%
   mutate(trt_label = ifelse(treatment == 1, "Active (TDF)", "Comparator (ETV)"))
 
