@@ -514,62 +514,33 @@ run_lmtp_analysis <- function(lmtp_prep,
     contrast_rd = contrast_rd
   )
   
- # Optional: baseline-only intervention
- 
-  if(add_baseline_only){
- baseline_trt <- lmtp_prep$A_cols[1]
- 
- shifted_baseline_on <- make_shifted_baseline(
-   data = lmtp_prep$data,
-   baseline_trt = baseline_trt,
-   value = 1,
-   C_cols = lmtp_prep$C_cols
- )
- 
- 
- shifted_baseline_off <- make_shifted_baseline(
-   data = lmtp_prep$data,
-   baseline_trt = baseline_trt,
-   value = 0,
-   C_cols = lmtp_prep$C_cols
- )
- 
- res_baseline_on <- do.call(
-   lmtp::lmtp_sdr,
-   c(common_args, list(shifted = shifted_baseline_on, mtp = FALSE))
- )
- 
- res_baseline_off <- do.call(
-   lmtp::lmtp_sdr,
-   c(common_args, list(shifted = shifted_baseline_off, mtp = FALSE))
- )
- 
- 
- 
- res_baseline_on <- do.call(
-   lmtp::lmtp_sdr,
-   c(common_args, list(shifted = shifted_baseline_on, mtp = FALSE))
- )
- 
- res_baseline_off <- do.call(
-   lmtp::lmtp_sdr,
-   c(common_args, list(shifted = shifted_baseline_off, mtp = FALSE))
- )
- 
- 
- out$res_baseline_on <- res_baseline_on
- out$res_baseline_off <- res_baseline_off
- 
- out$risk_baseline_on <-
-   1 - res_baseline_on$theta[length(res_baseline_on$theta)]
- out$risk_baseline_off <-
-   1 - res_baseline_off$theta[length(res_baseline_off$theta)]
- 
- out$contrast_rr_baseline_only <-
-   lmtp::lmtp_contrast(res_baseline_on, ref = res_baseline_off, type = "rr")
- out$contrast_rd_baseline_only <-
-   lmtp::lmtp_contrast(res_baseline_on, ref = res_baseline_off, type = "additive")
-}
+ # Optional: baseline-only intervention (Joy's treatment-policy approach)
+ # Intervenes on A1 only, leaving A2..An at observed values.
+ # Uses lmtp's shifted= argument rather than shift function.
+  if (add_baseline_only && !is.null(lmtp_prep$A_cols)) {
+    baseline_trt <- lmtp_prep$A_cols[1]
+
+    shifted_baseline_on <- make_shifted_baseline(
+      data = lmtp_prep$data, baseline_trt = baseline_trt,
+      value = 1, C_cols = lmtp_prep$C_cols)
+    shifted_baseline_off <- make_shifted_baseline(
+      data = lmtp_prep$data, baseline_trt = baseline_trt,
+      value = 0, C_cols = lmtp_prep$C_cols)
+
+    res_baseline_on <- do.call(lmtp::lmtp_sdr,
+      c(common_args, list(shifted = shifted_baseline_on, mtp = FALSE)))
+    res_baseline_off <- do.call(lmtp::lmtp_sdr,
+      c(common_args, list(shifted = shifted_baseline_off, mtp = FALSE)))
+
+    out$res_baseline_on  <- res_baseline_on
+    out$res_baseline_off <- res_baseline_off
+    out$risk_baseline_on  <- 1 - res_baseline_on$theta[length(res_baseline_on$theta)]
+    out$risk_baseline_off <- 1 - res_baseline_off$theta[length(res_baseline_off$theta)]
+    out$contrast_rr_baseline_only <-
+      lmtp::lmtp_contrast(res_baseline_on, ref = res_baseline_off, type = "rr")
+    out$contrast_rd_baseline_only <-
+      lmtp::lmtp_contrast(res_baseline_on, ref = res_baseline_off, type = "additive")
+  }
  
  
  out

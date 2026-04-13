@@ -315,9 +315,6 @@ kable(cox_tbl, format = "pipe")
 #| fig-height: 4
 #| fig-width: 10
 
-library(survminer)
-par(mfrow = c(1, 2))
-
 # KM: treatment-policy (no censor at switch)
 dat_km <- dat %>%
   mutate(time_use = pmin(follow_time, tau),
@@ -326,10 +323,8 @@ sf_naive <- survfit(Surv(time_use, event_use) ~ treatment, data = dat_km)
 
 # KM: censor at switch
 dat_cs <- dat %>%
-  mutate(
-    time_cs = pmin(follow_time, tau),
-    event_cs = as.integer(event == 1 & follow_time <= tau)
-  )
+  mutate(time_cs = pmin(follow_time, tau),
+         event_cs = as.integer(event == 1 & follow_time <= tau))
 if ("switch_time" %in% names(dat_cs)) {
   sw_before <- dat_cs$switched == 1 & dat_cs$switch_time < dat_cs$time_cs
   dat_cs$time_cs[sw_before]  <- pmin(dat_cs$switch_time[sw_before], tau)
@@ -337,22 +332,20 @@ if ("switch_time" %in% names(dat_cs)) {
 }
 sf_cs <- survfit(Surv(time_cs, event_cs) ~ treatment, data = dat_cs)
 
-km_combined <- list(
-  "Full follow-up" = sf_naive,
-  "Censored at switch" = sf_cs
-)
+# Plot using base R survfit plot (no survminer dependency)
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
 
-p_km <- ggsurvplot_list(
-  km_combined,
-  data = dat_km,
-  risk.table = FALSE,
-  conf.int = TRUE,
-  palette = c("steelblue", "tomato"),
-  legend.labs = c("Comparator", "Active"),
-  xlab = "Days", ylab = "Survival probability",
-  ggtheme = theme_minimal(base_size = 11)
-)
-arrange_ggsurvplots(p_km, ncol = 2)
+plot(sf_naive, col = c("steelblue", "tomato"), lwd = 2,
+     xlab = "Days", ylab = "Survival probability",
+     main = "Full follow-up (treatment-policy)")
+legend("bottomleft", c("Comparator", "Active"),
+       col = c("steelblue", "tomato"), lwd = 2, bty = "n", cex = 0.9)
+
+plot(sf_cs, col = c("steelblue", "tomato"), lwd = 2,
+     xlab = "Days", ylab = "Survival probability",
+     main = "Censored at switch")
+legend("bottomleft", c("Comparator", "Active"),
+       col = c("steelblue", "tomato"), lwd = 2, bty = "n", cex = 0.9)
 ```
 
 The baseline-treatment Cox model ignores switching and is often interpreted as a treatment-policy analysis. Under non-proportional hazards, however, the Cox HR is a weighted average of time-specific hazard ratios, and the weights depend on the censoring distribution (Rufibach 2018). When CKD confounds both treatment and the outcome, the unadjusted KM risk difference reflects confounding rather than a causal contrast.
