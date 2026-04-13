@@ -27,10 +27,8 @@ suppressPackageStartupMessages({
 source(here("DGP.R"))
 source(here("R", "helpers.R"))
 
-# Number of parallel workers (set to number of cores)
-# Set to 1 for serial execution (reliable). Increase for parallel once
-# the PSOCK worker environment issue is resolved.
-N_CORES <- 1L
+# Number of parallel workers. Set to 1 for serial (with progress bar).
+N_CORES <- 8L
 
 # ── Single iteration for one estimand ────────────────────────────────────────
 #' Run one iteration of the simulation study for a specific estimand.
@@ -303,43 +301,73 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
     message("  Estimand: ", est)
 
     if (n_cores > 1) {
-      # ── Parallel execution via PSOCK cluster (Windows-compatible) ──
+      # ── Parallel via PSOCK cluster (Windows-compatible) ──
+      # Strategy: each worker sources all project files to get every
+      # function defined locally. We pass run_one_iter's body directly
+      # by capturing it as a local variable and exporting it.
       cl <- makeCluster(n_cores)
-      on.exit(stopCluster(cl), add = TRUE)
 
-      # Load all packages and source all project scripts on each worker.
-      # Sourcing run_simulations.R on workers is safe because makeCluster
-      # is only called inside run_simulation_study(), not at file level.
-      clusterEvalQ(cl, {
-        suppressPackageStartupMessages({
-          library(dplyr)
-          library(survival)
-          library(broom)
-          library(here)
-          library(parallel)
-          library(lmtp)
-          library(SuperLearner)
-          library(arm)
+      # Set up each worker: load packages, source project files,
+      # and define run_one_iter in the worker's global environment.
+      # This avoids enclosing-environment issues with clusterExport.
+      tryCatch({
+        clusterEvalQ(cl, {
+          suppressPackageStartupMessages({
+            library(dplyr)
+            library(survival)
+            library(broom)
+            library(here)
+            library(lmtp)
+            library(SuperLearner)
+            library(arm)
+          })
+          source(here("DGP.R"))
+          source(here("R", "helpers.R"))
+          # Source the full run_simulations.R so run_one_iter is defined
+          # locally in each worker's global environment (not imported from
+          # the parent's closure). This ensures all helper functions
+          # referenced by run_one_iter are found via standard scoping.
+          source(here("R", "run_simulations.R"))
         })
-        source(here("DGP.R"))
-        source(here("R", "helpers.R"))
-        source(here("R", "run_simulations.R"))
+
+        # Capture loop variables for the closure
+        est_local <- est
+        iter_results <- parLapply(cl, seq_len(n_iter), function(i) {
+          run_one_iter(
+            i, estimand = est_local, sample_size = sample_size,
+            tau = tau, bin_width = bin_width,
+            lmtp_learners = lmtp_learners,
+            run_lmtp = run_lmtp, run_cox_td = run_cox_td,
+            dgp_args = dgp_args
+          )
+        })
+
+        est_res <- bind_rows(iter_results)
+      }, error = function(e) {
+        message("    Parallel failed: ", conditionMessage(e))
+        message("    Falling back to serial execution.")
+        est_res <<- NULL
+      }, finally = {
+        stopCluster(cl)
       })
 
-      iter_results <- parLapply(cl, seq_len(n_iter), function(i) {
-        run_one_iter(
-          i, estimand = est, sample_size = sample_size,
-          tau = tau, bin_width = bin_width,
-          lmtp_learners = lmtp_learners,
-          run_lmtp = run_lmtp, run_cox_td = run_cox_td,
-          dgp_args = dgp_args
-        )
-      })
-
-      stopCluster(cl)
-      on.exit(NULL)  # clear the on.exit since we stopped manually
-
-      est_res <- bind_rows(iter_results)
+      # If parallel failed, fall back to serial
+      if (is.null(est_res)) {
+        pb <- txtProgressBar(min = 0, max = n_iter, style = 3)
+        est_res <- NULL
+        for (i in seq_len(n_iter)) {
+          iter_res <- run_one_iter(
+            i, estimand = est, sample_size = sample_size,
+            tau = tau, bin_width = bin_width,
+            lmtp_learners = lmtp_learners,
+            run_lmtp = run_lmtp, run_cox_td = run_cox_td,
+            dgp_args = dgp_args
+          )
+          est_res <- bind_rows(est_res, iter_res)
+          setTxtProgressBar(pb, i)
+        }
+        close(pb)
+      }
     } else {
       # ── Serial fallback ──
       pb <- txtProgressBar(min = 0, max = n_iter, style = 3)
