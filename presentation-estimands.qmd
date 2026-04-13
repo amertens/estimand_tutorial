@@ -1,0 +1,680 @@
+---
+title: "Estimand–Estimator Alignment in Post-Authorization Safety Analyses"
+subtitle: "A causal roadmap approach to intercurrent events in time-to-event studies"
+author:
+  - name: "Andrew Mertens"
+    affiliation: "University of California, Berkeley"
+  - name: "Joy Shi"
+    affiliation: "Harvard T.H. Chan School of Public Health"
+date: today
+format:
+  revealjs:
+    theme: [default, custom.scss]
+    slide-number: true
+    width: 1280
+    height: 720
+    transition: fade
+    fig-align: center
+    code-fold: true
+    echo: false
+    message: false
+    warning: false
+    fig-dpi: 200
+execute:
+  cache: true
+bibliography: []
+---
+
+```{r}
+#| label: setup
+#| include: false
+#| cache: false
+
+# ── Source files from the estimand_tutorial project ──
+# ground_truth.rds, lmtp_main.rds, support_estimation.rds
+# DGP.R, R/helpers.R, R/support_diagnostics.R
+
+library(tidyverse)
+library(survival)
+library(here)
+library(knitr)
+
+# Presentation theme
+theme_pres <- theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    strip.text = element_text(size = 14),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12),
+    panel.grid.minor = element_blank()
+  )
+theme_set(theme_pres)
+
+pal <- c("steelblue", "tomato", "seagreen", "darkorange", "mediumpurple")
+
+# Source project code
+source(here("DGP.R"))
+source(here("R", "helpers.R"))
+
+# Load cached results
+truth_cache <- here("results", "sim_results", "ground_truth.rds")
+lmtp_cache  <- here("results", "lmtp_main.rds")
+sup_cache   <- here("results", "support_estimation.rds")
+
+has_truth <- file.exists(truth_cache)
+has_lmtp  <- file.exists(lmtp_cache)
+has_sup   <- file.exists(sup_cache)
+
+if (has_truth) truth_all <- readRDS(truth_cache)
+if (has_lmtp) lmtp_res  <- readRDS(lmtp_cache)
+if (has_sup)  sup_res    <- readRDS(sup_cache)
+```
+
+## The problem {.smaller}
+
+In post-authorization safety studies, the question *"does this drug increase the risk of [adverse event]?"* has no single answer until several decisions are made:
+
+. . .
+
+:::: {.columns}
+::: {.column width="55%"}
+**Intercurrent events complicate the question:**
+
+- Treatment switching or discontinuation
+- Informative monitoring and censoring
+- Competing events (e.g., death)
+- Loss to follow-up dependent on health status
+
+Each changes what the analysis is actually estimating.
+:::
+
+::: {.column width="45%"}
+**Three distinct failure modes:**
+
+1. **Wrong estimand** — the analysis answers a different question than intended
+2. **Right estimand, wrong estimator** — the method does not target the stated quantity
+3. **Right estimand and estimator, poor support** — data lack positivity for the target intervention
+:::
+::::
+
+::: {.notes}
+Frame the talk: this is not about a specific drug. It is about the analytical choices that determine what any post-marketing safety analysis is actually estimating.
+:::
+
+## Running example: antiviral nephrotoxicity {.smaller}
+
+:::: {.columns}
+::: {.column width="60%"}
+
+**Setting:** Post-marketing comparison of two hepatitis B antivirals for renal safety
+
+- **Active:** tenofovir-containing regimen (TDF)
+- **Comparator:** entecavir-based regimen (ETV)
+- **Outcome:** renal failure within 180 days
+- **Intercurrent event:** treatment switching driven by early renal signals
+
+**Key complication:** CKD drives both switching and the outcome — switching is informative.
+:::
+
+::: {.column width="40%"}
+
+**Published evidence:**
+
+- TDF associated with modestly elevated early renal risk vs ETV (Lee et al. 2019)
+- Risk higher among patients with baseline CKD (Jung et al. 2022; Mak et al. 2022)
+- Effect attenuates over longer follow-up
+:::
+::::
+
+::: {.notes}
+This is a simulated example calibrated to the published nephrotoxicity literature. The DGP uses HR=1.30 in the first 90 days, HR=0.90 after, with informative switching.
+:::
+
+## The causal roadmap {.smaller}
+
+The analysis should proceed through a structured sequence, not jump directly to a regression model.
+
+```{r}
+#| label: fig-roadmap
+#| fig-width: 11
+#| fig-height: 3.5
+
+library(ggplot2)
+
+steps <- tibble(
+  step = factor(1:6),
+  label = c("1. Causal\nquestion", "2. Causal\nmodel (DAG)",
+            "3. Identifiability\nassessment",
+            "4. Statistical\nestimand",
+            "5. Estimator\nchoice",
+            "6. Sensitivity\nanalysis"),
+  x = seq(1, 6),
+  y = 0
+)
+
+ggplot(steps, aes(x = x, y = y)) +
+  geom_segment(aes(x = x + 0.35, xend = x + 0.65, y = 0, yend = 0),
+               arrow = arrow(length = unit(0.15, "cm"), type = "closed"),
+               color = "grey40", linewidth = 0.8,
+               data = steps %>% filter(step != 6)) +
+  geom_label(aes(label = label), size = 4.5, fill = "white",
+             label.size = 0.5, label.padding = unit(0.4, "lines"),
+             fontface = "bold") +
+  annotate("text", x = 3.5, y = -0.25,
+           label = "Dang et al. 2023; Petersen 2014",
+           size = 3.5, color = "grey50", fontface = "italic") +
+  coord_cartesian(xlim = c(0.3, 6.7), ylim = c(-0.4, 0.4)) +
+  theme_void(base_size = 14)
+```
+
+. . .
+
+> Most analyses jump from step 1 to step 5. Steps 2–4 are where estimand–estimator mismatches originate.
+
+::: {.notes}
+The causal roadmap (Dang et al. 2023, Petersen 2014) organizes the analysis into a principled sequence. Most conventional analyses skip the middle steps.
+:::
+
+## Causal structure {.smaller}
+
+```{r}
+#| label: fig-dag
+#| fig-width: 10
+#| fig-height: 5.5
+
+library(dagitty)
+library(ggdag)
+
+dag <- dagify(
+  Treatment ~ W,
+  Switch ~ Treatment + W + Kidney,
+  Kidney ~ Treatment + W,
+  Censoring ~ Switch + W + Kidney,
+  AKI ~ Treatment + Switch + W + Kidney,
+  exposure = "Treatment",
+  outcome = "AKI",
+  labels = c(
+    W = "Baseline\nconfounders\n(CKD, age, ...)",
+    Treatment = "Treatment\nassignment\n(TDF vs ETV)",
+    Kidney = "Evolving\nkidney\nfunction",
+    Switch = "Treatment\nswitch",
+    Censoring = "Censoring /\nmonitoring",
+    AKI = "Renal\nfailure"
+  ),
+  coords = list(
+    x = c(W = 0, Treatment = -1, Kidney = 1, Switch = 1, Censoring = 2.5, AKI = 2),
+    y = c(W = 1, Treatment = 0, Kidney = 0, Switch = -0.8, Censoring = -0.8, AKI = 0.5)
+  )
+)
+
+ggdag(dag, text = FALSE, use_labels = "label", text_size = 4,
+      node_size = 20, stylized = FALSE) +
+  theme_dag(base_size = 14) +
+  theme(plot.margin = margin(5, 5, 5, 5))
+```
+
+::: {.notes}
+Key: W (especially CKD) is a common cause of treatment assignment, switching, kidney function, and AKI. Switching is driven by evolving kidney function, making it informative. Conditioning on post-treatment variables (switching, censoring) without adjustment can open collider paths.
+:::
+
+## Three estimands, one dataset {.smaller}
+
+Different strategies for handling switching define different causal quantities — even with the same data.
+
+```{r}
+#| label: tbl-estimands
+
+est_tbl <- tibble::tribble(
+  ~Strategy, ~`Switching handled by`, ~`Target population`, ~`Interpretation`,
+  "Treatment-policy",
+    "Included in follow-up (ignored)",
+    "All initiators",
+    "Real-world effect of initiating treatment, including downstream switching",
+  "Hypothetical no-switch",
+    "Modeled / intervened away",
+    "All initiators (counterfactual)",
+    "Effect if no patient could switch — isolates direct pharmacological effect",
+  "While-on-treatment",
+    "Censored at switch",
+    "Patients who remain on treatment",
+    "Effect during the period patients tolerate therapy"
+)
+
+kable(est_tbl, format = "pipe") |>
+  kableExtra::kable_styling(font_size = 14)
+```
+
+. . .
+
+Each answers a **different clinical question**. Choosing among them is a scientific decision, not a statistical one.
+
+::: {.notes}
+Two additional strategies (composite and principal stratum) exist under ICH E9(R1) but are not covered in detail here. The three shown are the most commonly encountered in safety analyses.
+:::
+
+## True effects differ across estimands {.smaller}
+
+Under the simulation DGP, the same drug produces different risk differences depending on the estimand strategy.
+
+```{r}
+#| label: fig-truth
+#| fig-width: 9
+#| fig-height: 5
+
+if (has_truth) {
+  truth_df <- tibble(
+    Strategy = c("Treatment-\npolicy", "No-switch\n(hypothetical)",
+                 "While-on-\ntreatment", "Composite", "Principal\nstratum"),
+    RD = c(truth_all$treatment_policy$true_rd,
+           truth_all$no_switch$true_rd,
+           truth_all$while_on_treatment$true_rd,
+           truth_all$composite$true_rd,
+           truth_all$principal_stratum$true_rd),
+    Strategy_order = 1:5,
+    group = c("Main", "Main", "Main", "Supplementary", "Supplementary")
+  ) %>%
+    mutate(Strategy = fct_reorder(Strategy, Strategy_order))
+
+  ggplot(truth_df, aes(x = Strategy, y = RD, fill = group)) +
+    geom_col(width = 0.6, alpha = 0.85) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+    geom_text(aes(label = sprintf("%+.3f", RD)),
+              vjust = ifelse(truth_df$RD > 0, -0.5, 1.5), size = 4.5) +
+    scale_fill_manual(values = c("Main" = "steelblue", "Supplementary" = "grey60"),
+                      guide = "none") +
+    labs(x = NULL, y = "True 180-day risk difference",
+         title = "Same drug, different estimands, different answers",
+         subtitle = "Monte Carlo truth (N = 500,000 per arm)") +
+    coord_cartesian(ylim = c(-0.01, max(truth_df$RD) * 1.15))
+} else {
+  plot.new()
+  text(0.5, 0.5, "Run R/run_cached_analyses.R to generate truth", cex = 1.5)
+}
+```
+
+::: {.notes}
+The composite RD is ~0.17 — dominated by differential switching rates, not renal failure. The TP and NS are nearly identical here because the post-switch hazard change is modest. The while-on-treatment and principal stratum condition on non-switching, selecting a subpopulation. This is the core teaching point: the treatment effect has no single value without specifying the estimand.
+:::
+
+
+## Why Cox regression may not target your estimand {.smaller}
+
+:::: {.columns}
+::: {.column width="55%"}
+
+**The Cox hazard ratio is a conditional parameter.** It does not generally equal the marginal risk contrast defined by any of the estimands above.
+
+Three issues compound:
+
+1. **Noncollapsibility:** The marginal HR differs from the conditional HR even without confounding (Martinussen 2022)
+2. **Built-in selection:** At later time points, high-risk subjects are differentially depleted (Stensrud et al. 2019)
+3. **Informative censoring:** Censoring at switch removes the highest-risk person-time, changing the risk set composition
+:::
+
+::: {.column width="45%"}
+```{r}
+#| label: fig-cox-riskset
+#| fig-width: 5
+#| fig-height: 4.5
+
+# Illustrate how censoring at switch distorts the risk set
+set.seed(42)
+n <- 200
+risk <- rbeta(n, 2, 5)
+trt <- rbinom(n, 1, 0.5)
+switch_prob <- plogis(-2 + 3 * risk + 0.5 * trt)
+switched <- rbinom(n, 1, switch_prob)
+
+df_riskset <- tibble(
+  `Baseline risk` = risk,
+  Treatment = factor(trt, labels = c("Comparator", "Active")),
+  Status = ifelse(switched == 1, "Switched (censored)", "Remained")
+)
+
+ggplot(df_riskset %>% filter(Treatment == "Active"),
+       aes(x = `Baseline risk`, fill = Status)) +
+  geom_histogram(bins = 25, alpha = 0.7, position = "identity") +
+  scale_fill_manual(values = c("Remained" = "steelblue",
+                                "Switched (censored)" = "tomato")) +
+  labs(title = "Active arm risk profile",
+       subtitle = "Censoring at switch removes highest-risk patients",
+       y = "Count") +
+  theme(legend.position = c(0.7, 0.8))
+```
+:::
+::::
+
+::: {.notes}
+This slide makes the point visually: the patients who switch away are the sickest. Censoring them distorts the remaining risk set, making the drug appear safer than it is. This is not a general critique of Cox regression — it is a specific concern when censoring is informative.
+:::
+
+
+## Estimand-aligned estimation {.smaller}
+
+The estimator should follow from the estimand, not the reverse.
+
+:::: {.columns}
+::: {.column width="50%"}
+
+**Conventional approaches:**
+
+| Analysis | What it estimates |
+|---|---|
+| Cox, ignore switch | Conditional HR; risk set altered by switching |
+| Cox, censor at switch | Conditional HR among non-switchers; biased if switching informative |
+| Cox, time-dependent trt | Conditional HR for current exposure; not a marginal target |
+:::
+
+::: {.column width="50%"}
+
+**Estimand-aligned approaches:**
+
+| Method | Target |
+|---|---|
+| LMTP / SDR | Marginal risk under specified intervention |
+| TMLE | Marginal risk under specified intervention |
+| G-computation | Marginal risk (requires correct outcome model) |
+| IPCW | Marginal risk (requires correct weight model) |
+
+All require specifying the intervention that defines the estimand.
+:::
+::::
+
+. . .
+
+> The SDR estimator is **doubly robust**: consistent if *either* the outcome model *or* the treatment/censoring model is correctly specified.
+
+::: {.notes}
+Key principle: the estimator must be chosen to target the parameter defined by the estimand. A Cox HR is always interpretable as a Cox HR — the question is whether that is the quantity the scientific question requires.
+:::
+
+
+## Simulation design {.smaller}
+
+```{r}
+#| label: fig-simdesign
+#| fig-width: 10
+#| fig-height: 4
+
+# Timeline schematic
+timeline <- tibble(
+  phase = c("Early period\n(0–90 days)", "Late period\n(90–180 days)"),
+  x = c(45, 135),
+  hr = c("HR = 1.30", "HR = 0.90"),
+  note = c("TDF increases\nrenal risk", "Effect attenuates,\nmodest reversal")
+)
+
+ggplot() +
+  # Timeline bar
+  annotate("rect", xmin = 0, xmax = 90, ymin = -0.15, ymax = 0.15,
+           fill = "tomato", alpha = 0.3) +
+  annotate("rect", xmin = 90, xmax = 180, ymin = -0.15, ymax = 0.15,
+           fill = "steelblue", alpha = 0.3) +
+  # Labels
+  annotate("text", x = 45, y = 0.35, label = "HR = 1.30\n(early harm)",
+           size = 5, fontface = "bold", color = "tomato") +
+  annotate("text", x = 135, y = 0.35, label = "HR = 0.90\n(attenuated)",
+           size = 5, fontface = "bold", color = "steelblue") +
+  # Switching annotation
+  annotate("segment", x = 60, xend = 60, y = -0.15, yend = -0.4,
+           arrow = arrow(length = unit(0.2, "cm")), color = "darkorange") +
+  annotate("text", x = 60, y = -0.55, label = "~12% switch\n(informative)",
+           size = 4, color = "darkorange") +
+  # Axis
+  annotate("segment", x = 0, xend = 180, y = 0, yend = 0,
+           linewidth = 1.2) +
+  annotate("text", x = c(0, 90, 180), y = -0.08,
+           label = c("Day 0", "Day 90", "Day 180"), size = 4) +
+  # DGP notes
+  annotate("text", x = 90, y = -0.85,
+           label = "N = 10,000 | Confounding by CKD, cirrhosis, age | Non-proportional hazards",
+           size = 3.5, color = "grey40") +
+  coord_cartesian(xlim = c(-10, 190), ylim = c(-1, 0.6)) +
+  theme_void(base_size = 14) +
+  labs(title = "Data-generating process: hepatitis B renal safety")
+```
+
+::: {.notes}
+The DGP is calibrated to the published hepatitis B nephrotoxicity literature. Treatment assignment is confounded by CKD, cirrhosis, and age. Switching is driven by treatment and CKD, making it informative. The non-proportional hazard structure means any single HR is a time-averaged summary.
+:::
+
+
+## Single-dataset results {.smaller}
+
+```{r}
+#| label: fig-single-dataset
+#| fig-width: 10
+#| fig-height: 5
+
+# Generate a single dataset and run all analyses
+set.seed(2026)
+dat <- generate_hep_data(N = 10000, np_hazard = TRUE, dep_censor = TRUE,
+                         complexity = TRUE, seed = 2026)
+
+tau <- 180
+covars <- c("age", "ckd", "cirrhosis", "diabetes", "heart_failure")
+
+cox_n  <- fit_cox_naive(dat, tau = tau, covars = covars)
+cox_cs <- fit_cox_censor_switch(dat, tau = tau, covars = covars)
+km_n   <- km_risk_at(cox_n$survfit, t = tau)
+km_cs  <- km_risk_at(cox_cs$survfit, t = tau)
+
+# Build comparison
+results_single <- tibble(
+  Analysis = c("Cox (baseline trt)", "Cox (censor at switch)",
+               "LMTP SDR"),
+  Scale = c("HR", "HR", "RD"),
+  Estimate = c(round(cox_n$hr, 3), round(cox_cs$hr, 3),
+               if (has_lmtp) round(lmtp_res$contrast_rd$estimates$estimate, 4) else NA),
+  `KM RD` = c(round(km_n$risk_diff, 4), round(km_cs$risk_diff, 4),
+              if (has_lmtp) round(lmtp_res$contrast_rd$estimates$estimate, 4) else NA),
+  `True TP RD` = rep(if (has_truth) round(truth_all$treatment_policy$true_rd, 4) else NA, 3)
+)
+
+kable(results_single, format = "pipe",
+      caption = "Estimates from a single simulated dataset (N = 10,000)")
+```
+
+. . .
+
+The Cox HR and unadjusted KM risk difference reflect **confounding** — CKD patients are more likely to receive TDF *and* to develop renal failure. The LMTP risk difference is closer to the marginal truth but subject to finite-sample variability.
+
+::: {.notes}
+Do not compare the Cox HR and LMTP RD as though they estimate the same quantity. The point is that they target different parameters, and the Cox analyses are further biased by confounding.
+:::
+
+
+## Positivity and support {.smaller}
+
+Even an aligned estimator fails when the data do not support the target intervention.
+
+```{r}
+#| label: fig-support
+#| fig-width: 10
+#| fig-height: 5
+
+# Generate switching distributions under three scenarios
+set.seed(101)
+dat_good <- generate_hep_data(N = 5000, np_hazard = TRUE, dep_censor = TRUE,
+                               complexity = TRUE, seed = 101)
+set.seed(103)
+dat_poor <- generate_hep_data(N = 5000, np_hazard = TRUE, dep_censor = TRUE,
+                               complexity = TRUE,
+                               gamma_A = 2.5, gamma_ckd = 2.0,
+                               lambda_sw0 = 1e-2, seed = 103)
+
+# Fit switching models
+sw_good <- glm(switched ~ age + ckd + treatment + cirrhosis,
+               data = dat_good, family = binomial)
+sw_poor <- glm(switched ~ age + ckd + treatment + cirrhosis,
+               data = dat_poor, family = binomial)
+
+combined <- bind_rows(
+  dat_good %>% mutate(p_switch = predict(sw_good, type = "response"),
+                       Scenario = "Good support (~12% switching)"),
+  dat_poor %>% mutate(p_switch = predict(sw_poor, type = "response"),
+                       Scenario = "Poor support (~65% switching)")
+) %>%
+  mutate(trt_label = ifelse(treatment == 1, "Active (TDF)", "Comparator (ETV)"))
+
+ggplot(combined, aes(x = p_switch, fill = trt_label)) +
+  geom_histogram(alpha = 0.6, bins = 40, position = "identity") +
+  facet_wrap(~ Scenario, scales = "free_y", ncol = 2) +
+  scale_fill_manual(values = c("tomato", "steelblue")) +
+  labs(x = "Predicted P(switch | baseline covariates)",
+       y = "Count", fill = "Treatment arm",
+       title = "Switching probability distributions under two support scenarios") +
+  theme(legend.position = "bottom")
+```
+
+::: {.notes}
+Under poor support, CKD patients on the active drug switch near-deterministically. The censoring model must extrapolate heavily, and any estimator's performance degrades. This is failure mode #3: right estimand, right estimator, but the data do not support the question.
+:::
+
+
+## Support degrades estimation {.smaller}
+
+```{r}
+#| label: tbl-support-results
+
+if (has_sup) {
+  sup_display <- sup_res %>%
+    mutate(across(where(is.numeric), ~ round(., 3)))
+  kable(sup_display, format = "pipe",
+        caption = "Estimation results across support scenarios (N = 5,000)")
+} else {
+  cat("*Support results not cached. Run R/run_cached_analyses.R.*")
+}
+```
+
+. . .
+
+Under poor support:
+
+- The **censor-at-switch Cox HR diverges** from the naive HR (censoring removes a large, non-random fraction of the active arm)
+- **LMTP estimates become unstable** as the censoring model extrapolates into poorly supported regions
+- Diagnostics — switching probabilities, effective sample sizes, propensity score overlap — should be examined **before** interpreting any estimate
+
+::: {.notes}
+The support diagnostic is as important as the estimator choice. A well-aligned estimator with poor support is no better than a misaligned estimator with good support.
+:::
+
+
+## Practical workflow {.smaller}
+
+:::: {.columns}
+::: {.column width="60%"}
+
+1. **Define the causal question** — what treatment strategies are being compared? What outcome? Over what time horizon?
+
+2. **Specify intercurrent event handling** — switching, censoring, death: which strategy for each?
+
+3. **Draw the DAG** — identify confounders, mediators, colliders. Determine what is time-varying.
+
+4. **Assess identifiability** — exchangeability, positivity, consistency. State assumptions explicitly.
+
+5. **Choose the estimator** — match it to the estimand, not the reverse.
+
+6. **Diagnose support** — check positivity before trusting any estimate.
+
+7. **Conduct sensitivity analysis** — how robust is the conclusion to violations of key assumptions?
+:::
+
+::: {.column width="40%"}
+
+**Common pitfalls:**
+
+- Jumping from question to Cox model without specifying the estimand
+- Treating censor-at-switch as "standard" without acknowledging the implied estimand
+- Comparing HRs and RDs as though they estimate the same thing
+- Interpreting unadjusted KM curves causally
+- Ignoring positivity violations
+:::
+::::
+
+
+## Conclusions {.smaller}
+
+:::: {.columns}
+::: {.column width="60%"}
+
+**Different estimands answer different questions.** The treatment effect has no single value without specifying how intercurrent events are handled.
+
+**Cox hazard ratios are conditional parameters.** They do not generally correspond to the marginal risk contrasts defined by ICH E9(R1) estimands. Under non-proportional hazards and informative censoring, their interpretation is further complicated.
+
+**Estimand-aligned estimators exist.** LMTP, TMLE, and related doubly robust methods target marginal risk contrasts directly, but their performance depends on data support and model specification.
+
+**Diagnostics are not optional.** Identification does not guarantee estimation. Positivity and support should be assessed before interpreting any causal estimate.
+:::
+
+::: {.column width="40%"}
+
+**The causal roadmap:**
+
+```{r}
+#| label: fig-roadmap-small
+#| fig-width: 4
+#| fig-height: 4
+
+steps_small <- tibble(
+  label = c("Question", "DAG", "Identify", "Estimand",
+            "Estimator", "Sensitivity"),
+  y = 6:1
+)
+
+ggplot(steps_small, aes(x = 1, y = y)) +
+  geom_segment(aes(x = 1, xend = 1, y = y - 0.35, yend = y - 0.65),
+               arrow = arrow(length = unit(0.15, "cm")),
+               color = "grey40",
+               data = steps_small %>% filter(y > 1)) +
+  geom_label(aes(label = label), size = 5, fill = "white",
+             label.size = 0.5, fontface = "bold") +
+  coord_cartesian(xlim = c(0.5, 1.5), ylim = c(0.3, 6.7)) +
+  theme_void()
+```
+:::
+::::
+
+
+## References {.smaller}
+
+::: {style="font-size: 0.65em;"}
+- ICH E9(R1) Addendum (2019). Estimands and sensitivity analyses in clinical trials.
+- Dang LE, et al. (2023). A causal roadmap for generating high-quality real-world evidence. *J Clin Transl Sci.*
+- Petersen ML (2014). Applying a causal road map in settings with time-dependent confounding. *Epidemiology.*
+- Gruber S, et al. (2022). Developing a targeted learning-based statistical analysis plan. *Stat Biopharm Res.*
+- Gruber S, et al. (2024). Targeted learning: toward a future informed by real-world evidence. *Stat Biopharm Res.*
+- Chen RC, et al. (2023). Beyond the Cox hazard ratio. *Clinical Trials.*
+- Martinussen T (2022). Causality and the Cox regression model. *Annu Rev Stat Appl.*
+- Stensrud MJ, et al. (2019). Limitations of hazard ratios in clinical trials. *Eur Heart J.*
+- Rufibach K (2019). Treatment effect quantification for time-to-event endpoints. *Pharm Stat.*
+- Williams N, Diaz I (2023). lmtp: Non-parametric causal effects based on modified treatment policies. R package.
+- Latimer NR, et al. (2014). Adjusting survival time estimates for treatment switching. *Stat Methods Med Res.*
+- Lee SW, et al. (2019). TDF vs ETV on renal function. Systematic review.
+- Jung CY, et al. (2022). Kidney function decline with TDF vs ETV. *Int J Infect Dis.*
+:::
+
+
+## {.appendix}
+
+### Appendix: DGP parameters
+
+| Parameter | Value | Description |
+|---|---|---|
+| `h0` | 5 $\times$ 10$^{-4}$ | Baseline hazard |
+| `HR_early` | 1.30 | TDF vs ETV, first 90 days |
+| `HR_late` | 0.90 | TDF vs ETV, after 90 days |
+| `lambda_sw0` | 1.0 $\times$ 10$^{-3}$ | Baseline switching hazard |
+| `gamma_A` | 0.80 | log-HR for treatment on switching |
+| `gamma_ckd` | 0.60 | log-HR for CKD on switching |
+| CKD prevalence | 8% | Key confounder |
+| N (simulation) | 10,000 | Per iteration |
+| Time bins | 14-day (biweekly) | For LMTP discretisation |
+
+### Appendix: estimand–estimator alignment table
+
+| Estimand | Cox naive | Cox censor-at-switch | LMTP SDR |
+|---|---|---|---|
+| Treatment-policy | Conditional HR (not marginal RD) | Wrong estimand (censors at switch) | Marginal RD under static intervention |
+| No-switch | Includes post-switch outcomes | Assumes non-informative censoring | Marginal RD under no-switch intervention |
+| While-on-treatment | Includes post-switch person-time | Biased if switching informative | Marginal RD via censoring model |
