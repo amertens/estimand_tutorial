@@ -94,8 +94,10 @@ if (!file.exists(lmtp_cache)) {
   message("  Event rate: ", round(mean(dat$event), 4))
   message("  Switch rate: ", round(mean(dat$switched), 4))
 
+  # Treatment-policy: baseline-only treatment (time_varying_trt=FALSE)
   lmtp_prep <- prepare_lmtp_data(
     dat, tau = tau, bin_width = BIN_WIDTH,
+    time_varying_trt = FALSE,
     baseline = c("age", "sex_male", "ckd", "diabetes",
                  "hypertension", "heart_failure")
   )

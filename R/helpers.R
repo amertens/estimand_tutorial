@@ -1,9 +1,15 @@
 # helpers.R
 # Utility functions for the estimand-estimator simulation study.
 # Provides Cox regression variants, LMTP data preparation, and risk utilities.
-# Note: the LMTP analysis uses static baseline interventions for all policies.
-# A distinct no-switch intervention (preventing post-baseline switching) is
-# not yet implemented; see intervention_no_switch() placeholder.
+#
+# LMTP intervention logic per estimand:
+#   treatment_policy:   time_varying_trt=FALSE (baseline "treatment" only).
+#                       LMTP assigns A at baseline; censoring model handles switching.
+#   no_switch:          time_varying_trt=TRUE (A_j columns). static_binary holds
+#                       treatment constant = no-switch counterfactual.
+#   while_on_treatment: time_varying_trt=TRUE on WOT-derived data (censored at switch).
+#   composite:          time_varying_trt=FALSE on composite-derived data.
+#   principal_stratum:  time_varying_trt=FALSE on subset (never-switchers).
 
 # TODO(Joy): confirm exact file paths for the archived Cox and LMTP scripts used.
 
@@ -252,21 +258,35 @@ intervention_no_switch <- function(data, trt) {
 
 # ── LMTP data preparation ───────────────────────────────────────────────────
 #' Prepare wide-format data for lmtp_sdr().
+#'
+#' When time_varying_trt = TRUE: creates time-varying A_j columns reflecting
+#' the observed treatment trajectory (switches from baseline to opposite after
+#' switch_time). Used for the no-switch and WOT estimands, where the LMTP
+#' intervention holds treatment constant via static_binary_on/off.
+#'
+#' When time_varying_trt = FALSE: uses baseline "treatment" column only as
+#' the single trt variable. Used for treatment-policy (let switching occur
+#' naturally; LMTP censoring model handles it) and composite (switching is
+#' part of the outcome, not a treatment change).
+#'
 #' @param dat data.frame from generate_hep_data().
 #' @param tau integer; follow-up horizon in days.
-#' @param bin_width integer; number of days per time bin. Default 1 (daily).
-#'   Use 7 for weekly bins (~26 columns instead of 180) for faster LMTP.
-#'   Coarser bins trade temporal resolution for speed.
+#' @param bin_width integer; days per time bin.
+#' @param time_varying_trt logical; if TRUE, create A_j columns from observed
+#'   switching trajectory. If FALSE, use baseline treatment only.
+#' @param trt_var character; baseline treatment column name.
+#' @param switch_var character; switch time column name.
 #' @param baseline character vector of baseline covariate names.
-#' @return list with wide data.frame, Y_cols, C_cols, baseline, n_bins.
-prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,trt_var = "treatment",
+#' @return list with data, Y_cols, C_cols, A_cols (or NULL), baseline, n_bins.
+prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,
+                              time_varying_trt = TRUE,
+                              trt_var = "treatment",
                               switch_var = "switch_time",
                               baseline = c("age", "sex_male", "ckd",
                                            "diabetes", "hypertension",
                                            "heart_failure")) {
   baseline <- intersect(baseline, names(dat))
 
-  # Define time bins: each bin covers bin_width days
   bin_edges <- seq(0, tau, by = bin_width)
   if (tail(bin_edges, 1) < tau) bin_edges <- c(bin_edges, tau)
   n_bins <- length(bin_edges) - 1
@@ -279,83 +299,76 @@ prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,trt_var = "treatment
       time_to_cens = if_else(cens_event == 1, follow_time, as.numeric(tau))
     )
 
-  # Build wide Y and C vectors at binned resolution
   make_Y <- function(t_aki, e) {
     as.integer(bin_edges[-1] >= t_aki & e == 1)
   }
   make_C <- function(t_c, e) {
     v <- rep(1L, n_bins)
     if (e == 1 && t_c < tau) {
-      # Find the first bin where censoring occurs
       cens_bin <- which(bin_edges[-1] > t_c)[1]
-      if (!is.na(cens_bin) && cens_bin <= n_bins) {
-        v[seq(cens_bin, n_bins)] <- 0L
-      }
+      if (!is.na(cens_bin) && cens_bin <= n_bins) v[seq(cens_bin, n_bins)] <- 0L
     }
     v
   }
-  
-  
 
-# JOY: UPDATE
-# In addition to Ynodes and Cnodes, we need to have Anodes so that we can
-#incorporate the no-switching intervention
-    
-    # Function to create one subject's treatment path
-    make_A <- function(a0, sw_time) {
-      # Start with baseline treatment in every bin
-      A <- rep(as.integer(a0), n_bins)
-      
-      # If switch happens before tau, flip treatment after switch
-      if (is.finite(sw_time) && sw_time < tau) {
-        # first bin whose right endpoint is > switch_time
-        sw_bin <- which(bin_edges[-1] > sw_time)[1]
-        
-        if (!is.na(sw_bin) && sw_bin <= n_bins) {
-          A[seq(sw_bin, n_bins)] <- 1L - as.integer(a0)
-        }
-      }
-      A
-    }
-    
-  A_mat <- t(mapply(make_A, dat[[trt_var]], dat[[switch_var]]))
   Y_mat <- t(mapply(make_Y, dat$time_to_aki, dat$aki_event))
   C_mat <- t(mapply(make_C, dat$time_to_cens, dat$cens_event))
 
-  A_cols <- paste0("A", seq_len(n_bins))
   Y_cols <- paste0("Y", seq_len(n_bins))
   C_cols <- paste0("C", seq_len(n_bins))
-  
   colnames(Y_mat) <- Y_cols
   colnames(C_mat) <- C_cols
-  colnames(A_mat) <- A_cols
-  
-  wide <- bind_cols(
-    dat %>% select(id, treatment, all_of(baseline)),
-    as_tibble(A_mat),
-    as_tibble(Y_mat),
-    as_tibble(C_mat)
-  )
 
-  # Carry forward: once Y=1, all subsequent Y must be 1
+  if (time_varying_trt) {
+    # Time-varying A_j: reflects observed treatment at each bin.
+    # Before switch_time: A_j = baseline treatment.
+    # After switch_time: A_j = 1 - baseline treatment.
+    # Used for no-switch/WOT: static_binary intervention overrides all A_j
+    # to hold treatment constant = implements "no switching" counterfactual.
+    make_A <- function(a0, sw_time) {
+      A <- rep(as.integer(a0), n_bins)
+      if (is.finite(sw_time) && sw_time < tau) {
+        sw_bin <- which(bin_edges[-1] > sw_time)[1]
+        if (!is.na(sw_bin) && sw_bin <= n_bins)
+          A[seq(sw_bin, n_bins)] <- 1L - as.integer(a0)
+      }
+      A
+    }
+    A_mat <- t(mapply(make_A, dat[[trt_var]], dat[[switch_var]]))
+    A_cols <- paste0("A", seq_len(n_bins))
+    colnames(A_mat) <- A_cols
+
+    wide <- bind_cols(
+      dat %>% select(id, treatment, all_of(baseline)),
+      as_tibble(A_mat),
+      as_tibble(Y_mat),
+      as_tibble(C_mat)
+    )
+
+    # When A_cols are used as trt, include baseline treatment in adjustment set
+    baseline_out <- if (!"treatment" %in% baseline) c("treatment", baseline)
+                    else baseline
+  } else {
+    # Baseline-only treatment: single "treatment" column.
+    # Used for treatment-policy (let switching happen naturally; LMTP
+    # censoring model handles informative follow-up loss) and composite
+    # (switching is part of the outcome, not a treatment node).
+    A_cols <- NULL
+
+    wide <- bind_cols(
+      dat %>% select(id, treatment, all_of(baseline)),
+      as_tibble(Y_mat),
+      as_tibble(C_mat)
+    )
+    baseline_out <- baseline
+  }
+
   wide <- lmtp::event_locf(as.data.frame(wide), outcomes = Y_cols)
-
-  # Include baseline treatment in the adjustment set when using time-varying
-  # A_cols as trt (LMTP needs to adjust for baseline confounders including
-  # the initial treatment assignment).
-  baseline_out <- if (!"treatment" %in% baseline) c("treatment", baseline)
-                  else baseline
 
   list(data = as.data.frame(wide), A_cols = A_cols, Y_cols = Y_cols,
        C_cols = C_cols, baseline = baseline_out, n_bins = n_bins,
        bin_width = bin_width)
 }
-
-
-# Note: prepare_lmtp_data_tv() has been merged into prepare_lmtp_data()
-# above (Joy's update). The unified function always creates A_cols for
-# time-varying treatment. For no-switch/WOT, the static_binary_on/off
-# intervention holds treatment constant across all bins.
 
 
 # ── LMTP estimation wrapper ─────────────────────────────────────────────────
