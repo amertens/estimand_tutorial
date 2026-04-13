@@ -217,19 +217,61 @@ The hepatitis B safety setting studied here differs from the oncology crossover 
 
 ## Estimand Framework
 
-The ICH E9(R1) addendum defines five strategies for handling intercurrent events. We briefly state each in the context of treatment switching, then concentrate on the two that are most directly supported by the current simulation.
+The ICH E9(R1) addendum defines five strategies for handling intercurrent events. Each corresponds to a different target trial — a different hypothetical experiment — and therefore a different causal quantity. We define all five below, specifying for each the counterfactual intervention, how the truth is computed in the simulation, and how LMTP implements the corresponding estimator.
 
-**Treatment-policy.** Compare 180-day risks between populations initiated on active versus comparator, regardless of subsequent switching. The target is $\psi^{TP} = E[Y^{a=1}(180)] - E[Y^{a=0}(180)]$, where switching occurs naturally.
+### Treatment-policy
 
-**Hypothetical no-switch.** Compare risks under the counterfactual assumption that no patients switch. The target is $\psi^{HYP} = E[Y^{a=1, \text{no switch}}(180)] - E[Y^{a=0, \text{no switch}}(180)]$. Identification requires modelling the confounders that drive switching.
+*Target trial:* Randomise patients to active or comparator at baseline. Follow all patients for 180 days regardless of any treatment changes. If a patient switches regimens, continue following them — the switch and its consequences are part of what happens under the assigned strategy.
 
-**While-on-treatment.** Compare risks while patients remain on assigned treatment. Follow-up is censored at switching. Naive estimation assumes non-informative censoring; IPCW or LMTP can relax this.
+*Counterfactual:* $Y^{a}(180)$ is the renal-failure indicator under baseline assignment $a$, with switching occurring naturally. The target is $\psi^{TP} = E[Y^{a=1}(180)] - E[Y^{a=0}(180)]$.
 
-**Composite.** Define the outcome as renal failure *or* switching. This avoids modelling switching but conflates tolerability with safety.
+*Truth:* Generate 500,000 all-treated and all-control subjects with switching enabled (`switch_on = TRUE`). Post-switch hazards change to reflect the new treatment. Follow-up is not censored at switch. Compute 180-day cumulative incidence in each arm.
 
-**Principal stratum.** Restrict to patients who would not switch under either treatment. The stratum is latent and requires structural assumptions for identification.
+*LMTP implementation:* Treatment is modelled as a single baseline variable (`time_varying_trt = FALSE`). The intervention sets $A = 1$ or $A = 0$ at baseline. Post-baseline switching is part of the natural course; the LMTP censoring model adjusts for informative follow-up loss but does not intervene on treatment at later time points.
 
-The main analyses below focus on the treatment-policy and no-switch strategies, which illustrate the estimand--estimator mismatch most directly. Composite and principal stratum results from the simulation are reported in supplementary tables but are not discussed in detail because the current LMTP implementation does not provide well-matched estimators for them (see Limitations).
+### Hypothetical no-switch
+
+*Target trial:* Randomise patients to active or comparator at baseline. Prevent any patient from switching for the entire 180-day follow-up — a hypothetical intervention on the post-baseline treatment process.
+
+*Counterfactual:* $Y^{a, \bar{s}=0}(180)$ is the renal-failure indicator under baseline assignment $a$ and the intervention that sets switching to zero at all times. The target is $\psi^{HYP} = E[Y^{a=1, \bar{s}=0}(180)] - E[Y^{a=0, \bar{s}=0}(180)]$.
+
+*Truth:* Generate 500,000 all-treated and all-control subjects with switching suppressed entirely (`switch_on = FALSE`). Event times are drawn under sustained assigned treatment.
+
+*LMTP implementation:* Treatment is modelled as time-varying ($A_1, \ldots, A_{13}$), where each $A_j$ reflects the observed treatment at biweekly bin $j$ (baseline assignment before switch, opposite after). The static binary intervention overrides all $A_j$ to hold treatment constant — directly implementing the "no switching" counterfactual. Identification requires no unmeasured confounders of the switching decision at each time point (sequential exchangeability).
+
+### While-on-treatment
+
+*Target trial:* Randomise patients to active or comparator. Follow each patient only while they remain on their assigned treatment. If a patient switches, their follow-up ends at the switch time — they contribute person-time and events only while on the original regimen.
+
+*Counterfactual:* This is a conditioning estimand rather than a pure intervention. The target is the risk of renal failure by 180 days conditional on not switching: $\psi^{WOT} = E[Y^{a}(180) \mid S^{a} > 180]$, where $S^{a}$ is the potential switching time under assignment $a$.
+
+*Truth:* Generate 500,000 all-treated and all-control subjects with switching enabled. Restrict to subjects whose switch time exceeds 180 days (non-switchers). Compute 180-day risk within this subpopulation. This produces a conditional risk among subjects who would tolerate the assigned treatment for the full follow-up — a selected subpopulation that may differ systematically from the full population.
+
+*LMTP implementation:* Data are derived via `derive_estimand("while_on_treatment")`, which censors follow-up at switch time. Treatment is modelled as time-varying, and the static binary intervention holds treatment constant. The Y and C columns reflect censoring at switch, so LMTP estimates the marginal risk under sustained treatment among subjects not yet censored by switching. This is an intervention-based approximation to the conditioning-based WOT estimand; the two coincide when the no-switch intervention is close to the natural course for non-switchers.
+
+### Composite
+
+*Target trial:* Randomise patients to active or comparator. Define the outcome as the first occurrence of renal failure *or* treatment switching, whichever happens first. Follow all patients for 180 days.
+
+*Counterfactual:* $Y_{comp}^{a}(180) = I(\min(T_{event}^{a}, T_{switch}^{a}) \leq 180)$. The target is $\psi^{COMP} = E[Y_{comp}^{a=1}(180)] - E[Y_{comp}^{a=0}(180)]$.
+
+*Truth:* Generate all-treated and all-control with switching enabled. Apply `derive_estimand("composite")`, which redefines the event as the first of renal failure or switching. Compute 180-day risk of the composite endpoint.
+
+*LMTP implementation:* Treatment is modelled as baseline-only (`time_varying_trt = FALSE`), because switching is part of the outcome, not a treatment node. The composite outcome is encoded in the Y columns; the LMTP censoring model adjusts only for administrative censoring.
+
+### Principal stratum
+
+*Target trial:* Randomise patients to active or comparator. Restrict the analysis to the latent subpopulation of "never-switchers" — patients who would not switch under *either* treatment assignment.
+
+*Counterfactual:* $\psi^{PS} = E[Y^{a=1}(180) \mid S^{a=1} > \tau,\, S^{a=0} > \tau] - E[Y^{a=0}(180) \mid S^{a=1} > \tau,\, S^{a=0} > \tau]$. The principal stratum is defined by joint potential switching outcomes — a latent quantity that cannot be observed for any individual.
+
+*Truth:* Generate all-treated and all-control with the same random seed for baseline covariates (`return_potential_switching = TRUE`). Draw potential switching times under both treatments using paired random number streams. Identify subjects who would not switch under either assignment (`never_switcher = 1`). Compute 180-day risk within this stratum.
+
+*LMTP implementation:* Two analyses are reported. First, an approximation that restricts to observed non-switchers (subjects with `switched == 0`), which is a convenience proxy that systematically selects lower-risk patients. Second, an oracle analysis that restricts to true never-switchers (subjects with `never_switcher == 1`), which is valid for simulation but not available in practice. In both cases, treatment is baseline-only (`time_varying_trt = FALSE`), since non-switchers and never-switchers have constant treatment throughout.
+
+### Summary
+
+The main simulation results focus on the treatment-policy and no-switch estimands, which illustrate the estimand–estimator mismatch most directly. While-on-treatment, composite, and principal stratum results are reported in supplementary tables.
 
 ## Estimation Strategies
 
@@ -354,9 +396,16 @@ lmtp_tbl <- tibble::tibble(
 kable(lmtp_tbl, format = "pipe")
 ```
 
-The LMTP analysis sets baseline treatment to active ($A = 1$) or comparator ($A = 0$) for all subjects and estimates marginal 180-day risks under each intervention. Follow-up is discretised into biweekly bins (13 time points). The current Super Learner library includes `SL.mean`, `SL.glm`, and `SL.bayesglm` with 2-fold cross-validation; production analyses should use a richer library and more folds (Gruber et al. 2022).
+Follow-up is discretised into biweekly bins (13 time points). The current Super Learner library includes `SL.mean`, `SL.glm`, and `SL.bayesglm` with 2-fold cross-validation; production analyses should use a richer library and more folds (Gruber et al. 2022).
 
-For the treatment-policy estimand, LMTP models treatment as time-fixed at baseline; the censoring model adjusts for informative follow-up loss due to switching. For the no-switch and while-on-treatment estimands, treatment is modelled as time-varying (one column per bin reflecting observed switching), and the static binary intervention holds treatment constant across all bins---directly implementing the "no switching" counterfactual within the LMTP framework. The degree of alignment in each case depends on correct specification of the censoring and outcome models.
+The LMTP treatment specification differs by estimand:
+
+- **Treatment-policy:** A single baseline treatment variable. The intervention sets $A = 1$ or $A = 0$ at baseline only. Post-baseline switching is part of the natural course, handled by the LMTP censoring model.
+- **No-switch and while-on-treatment:** Time-varying treatment ($A_1, \ldots, A_{13}$), reflecting the observed switching trajectory. The static binary intervention overrides all $A_j$ to hold treatment constant, directly implementing the no-switch counterfactual.
+- **Composite:** A single baseline treatment variable. Switching is encoded in the outcome (Y columns), not in the treatment nodes.
+- **Principal stratum:** A single baseline treatment variable, applied to the subset of never-switchers.
+
+This distinction is critical. Intervening on time-varying treatment to hold it constant is a no-switch intervention. Using baseline-only treatment and letting the censoring model handle switching is a treatment-policy analysis. Confusing the two leads to estimand–estimator mismatch.
 
 ## Empirical Support Diagnostics {#sec-support}
 
@@ -559,13 +608,13 @@ Causal interpretation of any observational estimate depends on the assumption of
 
 ## Limitations
 
-The LMTP analysis for the no-switch and while-on-treatment estimands models treatment as time-varying and applies a static intervention that holds treatment constant across all time bins. This directly implements the "no switching" intervention within LMTP. For the treatment-policy estimand, treatment is modelled as time-fixed (baseline only), and the LMTP censoring model handles informative follow-up loss due to switching. The degree of alignment depends on correct specification of the censoring and outcome models.
+The treatment-policy and no-switch estimands are distinguished in this simulation by different LMTP treatment specifications: baseline-only for treatment-policy (letting switching occur naturally under the censoring model) versus time-varying with hold-constant intervention for no-switch. Whether these two specifications produce meaningfully different estimates depends on the strength of the switching effect on subsequent outcomes. In the current DGP, the post-switch hazard change is modest (HR shifts from 0.90 to 1.0 for active-to-comparator switchers), so the treatment-policy and no-switch truths are nearly identical.
 
-The while-on-treatment truth is computed as the conditional risk among subjects who would not switch before the 180-day risk window under counterfactual uniform treatment. This exercises the switching mechanism but remains a conditional quantity (conditioning on a post-treatment variable), which differs conceptually from an interventional target.
+The while-on-treatment estimand is conceptually a conditioning estimand (condition on not switching), but the LMTP implementation approximates it as an intervention estimand (intervene to prevent switching) on data censored at the switch time. The truth is computed as the conditional risk among counterfactual non-switchers. The intervention-based and conditioning-based quantities coincide when the no-switch intervention is close to the natural course for non-switchers, but they are conceptually distinct.
 
-The composite LMTP analysis uses the DGP's composite outcome (renal failure or switching, whichever comes first) directly. Under the composite policy, switching is encoded in the event indicator rather than the censoring indicator, so the LMTP censoring model adjusts only for administrative censoring. This addresses the prior misspecification concern, though the composite estimand's clinical interpretability remains limited.
+The composite LMTP uses baseline-only treatment with the composite outcome (renal failure or switching) encoded in the Y columns. Switching is no longer a treatment node; the censoring model adjusts only for administrative censoring. The clinical interpretability of the composite estimand remains limited because it conflates drug tolerability with drug safety.
 
-For the principal stratum, two LMTP analyses are reported: one restricted to observed non-switchers (a convenience approximation) and one restricted to true never-switchers identified through both potential switching outcomes. The true-stratum analysis is possible because the DGP generates paired switching indicators under each treatment assignment. In practice, the never-switcher stratum is latent and would require structural assumptions (e.g., monotonicity) or sensitivity analysis for identification.
+For the principal stratum, the true-stratum LMTP analysis is an oracle that requires paired potential switching outcomes under both treatments — available in simulation but not in practice. The observed-non-switcher analysis is a convenience proxy that selects a different (generally lower-risk) subpopulation.
 
 Biweekly time bins and a minimal Super Learner library (`SL.mean`, `SL.glm`, `SL.bayesglm`) are used throughout. Finer discretisation and a richer learner set would likely reduce residual bias. The simulation uses 20 iterations; coverage estimates at this sample size are imprecise.
 
