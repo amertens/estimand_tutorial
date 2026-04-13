@@ -28,9 +28,7 @@ source(here("DGP.R"))
 source(here("R", "helpers.R"))
 
 # Number of parallel workers. Set to 1 for serial (with progress bar).
-# Parallel (N_CORES > 1) requires all packages and functions available
-# on PSOCK workers. Use serial for reliability until parallel is debugged.
-N_CORES <- 1L
+N_CORES <- 8L
 
 # ── Single iteration for one estimand ────────────────────────────────────────
 #' Run one iteration of the simulation study for a specific estimand.
@@ -304,47 +302,49 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
 
     if (n_cores > 1) {
       # ── Parallel via PSOCK cluster (Windows-compatible) ──
-      # Strategy: each worker sources all project files to get every
-      # function defined locally. We pass run_one_iter's body directly
-      # by capturing it as a local variable and exporting it.
+      # Each worker sources DGP.R and helpers.R for data generation and
+      # analysis functions. run_one_iter is defined as a standalone
+      # wrapper function on each worker to avoid closure serialization
+      # issues. Arguments are passed explicitly via clusterExport.
       cl <- makeCluster(n_cores)
 
-      # Set up each worker: load packages, source project files,
-      # and define run_one_iter in the worker's global environment.
-      # This avoids enclosing-environment issues with clusterExport.
       tryCatch({
+        # Set up workers: packages + source files
         clusterEvalQ(cl, {
           suppressPackageStartupMessages({
-            library(dplyr)
-            library(survival)
-            library(broom)
-            library(here)
-            library(lmtp)
-            library(SuperLearner)
-            library(arm)
+            library(dplyr); library(survival); library(broom)
+            library(here); library(lmtp); library(SuperLearner); library(arm)
           })
           source(here("DGP.R"))
           source(here("R", "helpers.R"))
-          # Source the full run_simulations.R so run_one_iter is defined
-          # locally in each worker's global environment (not imported from
-          # the parent's closure). This ensures all helper functions
-          # referenced by run_one_iter are found via standard scoping.
-          source(here("R", "run_simulations.R"))
         })
 
-        # Capture loop variables for the closure
-        est_local <- est
-        iter_results <- parLapply(cl, seq_len(n_iter), function(i) {
+        # Export run_one_iter and all arguments as plain objects
+        # to workers' global environments. No closures.
+        clusterExport(cl, "run_one_iter", envir = environment())
+        worker_args <- list(
+          est = est, sample_size = sample_size, tau = tau,
+          bin_width = bin_width, lmtp_learners = lmtp_learners,
+          run_lmtp = run_lmtp, run_cox_td = run_cox_td,
+          dgp_args = dgp_args
+        )
+        clusterExport(cl, "worker_args", envir = environment())
+
+        # Use clusterApply with a minimal wrapper — no closure captures
+        iter_results <- clusterApply(cl, seq_len(n_iter), function(i) {
           run_one_iter(
-            i, estimand = est_local, sample_size = sample_size,
-            tau = tau, bin_width = bin_width,
-            lmtp_learners = lmtp_learners,
-            run_lmtp = run_lmtp, run_cox_td = run_cox_td,
-            dgp_args = dgp_args
+            i, estimand = worker_args$est,
+            sample_size = worker_args$sample_size,
+            tau = worker_args$tau,
+            bin_width = worker_args$bin_width,
+            lmtp_learners = worker_args$lmtp_learners,
+            run_lmtp = worker_args$run_lmtp,
+            run_cox_td = worker_args$run_cox_td,
+            dgp_args = worker_args$dgp_args
           )
         })
 
-        est_res <- bind_rows(iter_results)
+        est_res <- dplyr::bind_rows(iter_results)
       }, error = function(e) {
         message("    Parallel failed: ", conditionMessage(e))
         message("    Falling back to serial execution.")
