@@ -4,11 +4,7 @@ subtitle: "A simulation study using longitudinal targeted learning"
 format: html
 ---
 
-<!--
-TODO(Joy): verify variable mapping from DGP.R to manuscript notation.
-TODO(Joy): refine hepatitis B DGP parameters against published nephrotoxicity rates.
-TODO(Joy): decide whether to retain the time-dependent Cox model.
--->
+
 
 ```{r}
 #| label: setup

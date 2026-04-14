@@ -1,0 +1,267 @@
+---
+title: "Estimand–Estimator Alignment in Post-Authorization Safety Analyses"
+subtitle: "Intercurrent events, clinical questions, and causal interpretation"
+author: "Joy Nakato"
+date: "2026-04-13"
+format:
+  revealjs:
+    theme: simple
+    slide-number: true
+    transition: fade
+    center: false
+---
+
+## The problem {.smaller}
+
+In post-authorization safety studies, the question  
+*“Does this drug increase risk of [adverse event]?”*  
+has no single answer.
+
+::: columns
+::: {.column width="55%"}
+**Intercurrent events complicate the question:**
+- Treatment switching or discontinuation  
+- Informative monitoring and censoring  
+- Competing events (e.g., death)  
+- Loss to follow-up related to health status  
+:::
+
+::: {.column width="45%"}
+**Three failure modes:**
+1. Wrong estimand  
+2. Right estimand, wrong estimator  
+3. Right estimand, poor support  
+:::
+:::
+
+::: notes
+Set the framing. The key issue is not modeling choice but defining the question.
+:::
+
+---
+
+## Running example {.smaller}
+
+**Setting:** Antiviral nephrotoxicity
+
+- Treatment: TDF  
+- Comparator: ETV  
+- Outcome: renal failure (180 days)  
+
+**Key complication:**  
+Switching driven by early renal decline → informative
+
+**Implication:**  
+Handling switching defines the causal question.
+
+::: notes
+Keep this concrete. Switching is the central complication.
+:::
+
+---
+
+## The causal roadmap
+
+Causal question  
+→ Estimand  
+→ Statistical estimand  
+→ Estimator  
+→ Diagnostics
+
+**Most analyses jump directly to the estimator.**
+
+::: notes
+Emphasize structure. Errors originate before estimation.
+:::
+
+---
+
+## Causal structure
+
+*(Insert DAG figure here)*
+
+**Key features:**
+- CKD → treatment and outcome  
+- Kidney function → switching  
+- Switching → censoring  
+
+**Implication:**  
+Conditioning on switching can induce bias.
+
+::: notes
+Explain informativity of switching visually.
+:::
+
+---
+
+## Five estimands, one dataset {.smaller}
+
+| Strategy | Switching handling | Population | Interpretation |
+|----------|------------------|------------|---------------|
+| Treatment-policy | Ignored | All initiators | Real-world effect of initiating treatment |
+| Hypothetical | Eliminated | All initiators | Effect if switching impossible |
+| While-on-treatment | Censored | Remaining on treatment | Effect during exposure |
+| Composite | Included in outcome | All initiators | Failure = event or switch |
+| Principal stratum | Restricted | Latent subgroup | Effect among never-switchers |
+
+**Each defines a different question.**
+
+---
+
+## What decision does each estimand support? {.smaller}
+
+| Estimand | Use case | Decision-maker | Limitation |
+|----------|----------|----------------|------------|
+| Treatment-policy | Real-world safety | Regulators, clinicians | Includes downstream behavior |
+| Hypothetical | Drug toxicity | Mechanistic | Requires modeling assumptions |
+| While-on-treatment | Tolerability window | Clinicians | Sensitive to censoring |
+| Composite | Failure including switching | Safety review | Conflates biology + behavior |
+| Principal stratum | Stable subgroup | Methods | Not observable |
+
+::: notes
+This is the most important new slide. Anchor to decisions.
+:::
+
+---
+
+## Same data, different conclusions
+
+- Treatment-policy → modest increased risk  
+- Hypothetical → stronger toxicity signal  
+- While-on-treatment → attenuated estimate  
+- Composite → dominated by switching  
+- Principal stratum → unclear target  
+
+**The treatment effect is not unique.**
+
+---
+
+## Recommended estimands
+
+**Primary:**  
+Treatment-policy  
+→ aligns with real-world decisions
+
+**Secondary:**  
+Hypothetical no-switch  
+→ isolates pharmacologic effect
+
+**De-emphasized:**
+- While-on-treatment → informative censoring risk  
+- Composite → mixes mechanisms  
+- Principal stratum → not operational  
+
+::: notes
+Be explicit. Force a decision.
+:::
+
+---
+
+## Why Cox regression may mislead {.smaller}
+
+The Cox hazard ratio:
+
+- Conditional on survival  
+- Depends on changing risk sets  
+
+Three issues:
+1. Noncollapsibility  
+2. Selection bias  
+3. Informative censoring  
+
+**Result:** not a marginal causal effect.
+
+---
+
+## Estimand–estimator alignment {.smaller}
+
+| Estimand | Methods | Challenge |
+|----------|--------|----------|
+| Treatment-policy | TMLE, LMTP | Confounding |
+| Hypothetical | TMLE, g-methods | Modeling switching |
+| While-on-treatment | IPCW | Informative censoring |
+| Composite | Standard survival | Interpretation |
+| Principal stratum | Specialized | Identification |
+
+**Estimator must follow estimand.**
+
+---
+
+## Minimal simulation: estimands differ
+
+*(Insert simple plot of estimand-specific effects)*
+
+**Observation:**
+Same DGP → different true effects
+
+**Conclusion:**
+Differences are structural, not noise
+
+---
+
+## Minimal simulation: estimator alignment
+
+*(Insert simple comparison plot)*
+
+- Cox naive → confounded  
+- Cox censor-at-switch → biased  
+- TMLE / LMTP → aligned  
+
+**Message:** alignment matters
+
+---
+
+## Positivity and support
+
+*(Insert overlap plot)*
+
+Even correct methods fail when:
+- Poor overlap  
+- Deterministic switching  
+
+**Identification ≠ estimability**
+
+---
+
+## Practical workflow {.smaller}
+
+1. Define question  
+2. Specify intercurrent events  
+3. Choose estimand  
+4. Map to statistical target  
+5. Select estimator  
+6. Check support  
+7. Sensitivity analysis  
+
+**Pitfalls:**
+- Defaulting to Cox  
+- Ignoring switching  
+- Mixing estimands  
+
+---
+
+## Conclusions {.smaller}
+
+- Estimands define the question  
+- Intercurrent events determine interpretation  
+- Cox HR often misaligned with safety questions  
+- Estimand-aligned methods improve clarity  
+- Diagnostics are essential  
+
+**The key decision is the estimand.**
+
+---
+
+## Appendix
+
+### Simulation parameters
+
+| Parameter | Value |
+|----------|------|
+| Baseline hazard | 5e-4 |
+| Early HR | 1.3 |
+| Late HR | 0.9 |
+| Switching hazard | 1e-3 |
+| CKD prevalence | 8% |
+
+---

@@ -206,7 +206,6 @@ if (file.exists(cache_file)) {
     }
     results <- bind_rows(results_list)
   }
-}
 
 # ── Summarize ──
 message("\n=== RESULTS ===")
