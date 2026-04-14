@@ -197,11 +197,16 @@ run_one_iter <- function(i, estimand = "treatment_policy",
       })
 
     } else if (estimand == "while_on_treatment") {
-      # ── Time-varying A_j on WOT-derived data (censored at switch) ──
+      # ── Time-varying A_j on dat_raw: hold treatment constant ──
+      # WOT is a conditioning estimand, but LMTP implements an intervention.
+      # Using dat_raw (not dat_cox) with time-varying A_j and static_binary
+      # holds treatment constant = no-switch intervention. This approximates
+      # WOT when the no-switch intervention is close to the natural course
+      # for non-switchers. See Limitations for the conceptual distinction.
       results[["lmtp"]] <- tryCatch({
-        n_events <- sum(dat_cox$event == 1 & dat_cox$follow_time <= tau)
+        n_events <- sum(dat_raw$event == 1 & dat_raw$follow_time <= tau)
         if (n_events < 5) stop("Too few events: ", n_events)
-        prep <- prepare_lmtp_data(dat_cox, tau = tau, bin_width = bin_width,
+        prep <- prepare_lmtp_data(dat_raw, tau = tau, bin_width = bin_width,
                                   time_varying_trt = TRUE)
         res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
         extract_lmtp(res, "LMTP SDR (WOT)")
