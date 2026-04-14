@@ -27,9 +27,9 @@ BIN_WIDTH <- 28      # monthly bins (~7 time points) for speed
 N_SIM <- 5000        # smaller N for faster SL fits
 N_ITER <- 100
 
-# Production SL library — start simple to diagnose CV vs library effect
-SL_PROD <- c("SL.mean", "SL.glm")
-CV_FOLDS <- 5
+# Production SL library — adding xgboost to test flexible learner effect
+SL_PROD <- c("SL.mean", "SL.glm", "SL.bayesglm", "SL.xgboost")
+CV_FOLDS <- 2  # keep 2-fold for speed (5-fold showed no improvement)
 
 # How often to save incremental results
 SAVE_EVERY <- 5
@@ -61,33 +61,50 @@ if (file.exists(cache_file)) {
   requireNamespace("SuperLearner", quietly = TRUE)
   requireNamespace("arm", quietly = TRUE)
 
-  # Resume from partial results if they exist
+  # Load any existing results (preserves dev columns from prior runs)
   if (file.exists(cache_file)) {
     results_so_far <- readRDS(cache_file)
-    start_iter <- max(results_so_far$iter) + 1
-    results_list <- split(results_so_far, results_so_far$iter)
-    message("Resuming from iteration ", start_iter, " (", nrow(results_so_far), " rows cached)")
+    message("Loaded ", nrow(results_so_far), " cached rows (",
+            max(results_so_far$iter), " iterations)")
   } else {
-    results_list <- list()
-    start_iter <- 1
+    results_so_far <- NULL
   }
 
-  if (start_iter > N_ITER) {
-    message("All ", N_ITER, " iterations already complete.")
-    results <- if (exists("results_so_far")) results_so_far else readRDS(cache_file)
+  # Determine which iterations need prod rerun
+  # (dev results are preserved from cache; only prod is recomputed)
+  iters_need_prod <- if (is.null(results_so_far)) {
+    seq_len(N_ITER)
   } else {
-    for (i in seq(start_iter, N_ITER)) {
-      t0 <- Sys.time()
-      set.seed(2000 + i)
+    # Rerun prod for all iters; keep dev from cache where available
+    seq_len(N_ITER)
+  }
 
-      dat <- generate_hep_data(
-        N = N_SIM, np_hazard = TRUE, dep_censor = TRUE,
-        complexity = TRUE, seed = 2000 + i
-      )
+  results_list <- list()
 
-      covars <- c("age", "ckd", "cirrhosis", "diabetes", "heart_failure")
+  for (i in iters_need_prod) {
+    t0 <- Sys.time()
+    set.seed(2000 + i)
 
-      # Cox naive
+    dat <- generate_hep_data(
+      N = N_SIM, np_hazard = TRUE, dep_censor = TRUE,
+      complexity = TRUE, seed = 2000 + i
+    )
+
+    covars <- c("age", "ckd", "cirrhosis", "diabetes", "heart_failure")
+
+    # Check if dev results exist in cache for this iteration
+    cached_row <- if (!is.null(results_so_far) && i %in% results_so_far$iter) {
+      results_so_far[results_so_far$iter == i, ]
+    } else NULL
+
+    has_dev <- !is.null(cached_row) && !is.na(cached_row$dev_rd[1])
+
+    # Cox naive — reuse from cache if available
+    if (!is.null(cached_row) && !is.na(cached_row$cox_hr[1])) {
+      cox_res <- list(cox_hr = cached_row$cox_hr[1],
+                      cox_rd = cached_row$cox_rd[1],
+                      cox_converged = cached_row$cox_converged[1])
+    } else {
       cox_res <- tryCatch({
         fit <- fit_cox_naive(dat, tau = tau, covars = covars)
         km <- km_risk_at(fit$survfit, t = tau)
@@ -95,8 +112,15 @@ if (file.exists(cache_file)) {
       }, error = function(e) {
         list(cox_hr = NA, cox_rd = NA, cox_converged = FALSE)
       })
+    }
 
-      # LMTP — development spec (SL.mean + SL.glm + SL.bayesglm, 2-fold)
+    # LMTP dev — reuse from cache if available, skip recomputation
+    if (has_dev) {
+      lmtp_dev <- list(dev_rd = cached_row$dev_rd[1],
+                       dev_ci_low = cached_row$dev_ci_low[1],
+                       dev_ci_high = cached_row$dev_ci_high[1],
+                       dev_converged = cached_row$dev_converged[1])
+    } else {
       lmtp_dev <- tryCatch({
         prep <- prepare_lmtp_data(dat, tau = tau, bin_width = BIN_WIDTH,
                                   time_varying_trt = FALSE)
@@ -114,40 +138,41 @@ if (file.exists(cache_file)) {
         list(dev_rd = NA, dev_ci_low = NA, dev_ci_high = NA,
              dev_converged = FALSE)
       })
+    }
 
-      # LMTP — production spec (SL_PROD, CV_FOLDS-fold)
-      lmtp_prod <- tryCatch({
-        prep <- prepare_lmtp_data(dat, tau = tau, bin_width = BIN_WIDTH,
-                                  time_varying_trt = FALSE)
-        res <- run_lmtp_analysis(prep, folds = CV_FOLDS,
-                                 learners = SL_PROD)
-        rd_obj <- res$contrast_rd
-        rd_est <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$estimate
-                  else rd_obj$vals$theta
-        rd_se <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$std.error
-                 else rd_obj$vals$std.error
-        rd_ci <- rd_est + c(-1, 1) * 1.96 * rd_se
-        list(prod_rd = rd_est, prod_ci_low = rd_ci[1], prod_ci_high = rd_ci[2],
-             prod_converged = TRUE)
-      }, error = function(e) {
-        list(prod_rd = NA, prod_ci_low = NA, prod_ci_high = NA,
-             prod_converged = FALSE)
-      })
+    # LMTP prod — always recompute (this is the new spec being tested)
+    lmtp_prod <- tryCatch({
+      prep <- prepare_lmtp_data(dat, tau = tau, bin_width = BIN_WIDTH,
+                                time_varying_trt = FALSE)
+      res <- run_lmtp_analysis(prep, folds = CV_FOLDS,
+                               learners = SL_PROD)
+      rd_obj <- res$contrast_rd
+      rd_est <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$estimate
+                else rd_obj$vals$theta
+      rd_se <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$std.error
+               else rd_obj$vals$std.error
+      rd_ci <- rd_est + c(-1, 1) * 1.96 * rd_se
+      list(prod_rd = rd_est, prod_ci_low = rd_ci[1], prod_ci_high = rd_ci[2],
+           prod_converged = TRUE)
+    }, error = function(e) {
+      list(prod_rd = NA, prod_ci_low = NA, prod_ci_high = NA,
+           prod_converged = FALSE)
+    })
 
-      results_list[[as.character(i)]] <- tibble(
-        iter = i,
-        cox_hr = cox_res$cox_hr,
-        cox_rd = cox_res$cox_rd,
-        cox_converged = cox_res$cox_converged,
-        dev_rd = lmtp_dev$dev_rd,
-        dev_ci_low = lmtp_dev$dev_ci_low,
-        dev_ci_high = lmtp_dev$dev_ci_high,
-        dev_converged = lmtp_dev$dev_converged,
-        prod_rd = lmtp_prod$prod_rd,
-        prod_ci_low = lmtp_prod$prod_ci_low,
-        prod_ci_high = lmtp_prod$prod_ci_high,
-        prod_converged = lmtp_prod$prod_converged
-      )
+    results_list[[as.character(i)]] <- tibble(
+      iter = i,
+      cox_hr = cox_res$cox_hr,
+      cox_rd = cox_res$cox_rd,
+      cox_converged = cox_res$cox_converged,
+      dev_rd = lmtp_dev$dev_rd,
+      dev_ci_low = lmtp_dev$dev_ci_low,
+      dev_ci_high = lmtp_dev$dev_ci_high,
+      dev_converged = lmtp_dev$dev_converged,
+      prod_rd = lmtp_prod$prod_rd,
+      prod_ci_low = lmtp_prod$prod_ci_low,
+      prod_ci_high = lmtp_prod$prod_ci_high,
+      prod_converged = lmtp_prod$prod_converged
+    )
 
       elapsed <- round(as.numeric(difftime(Sys.time(), t0, units = "mins")), 1)
 
