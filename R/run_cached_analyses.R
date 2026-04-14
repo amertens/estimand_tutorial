@@ -158,10 +158,14 @@ if (!file.exists(support_cache)) {
       error = function(e) list(hr = NA, ci_low = NA, ci_high = NA)
     )
     lmtp_rd <- tryCatch({
-      prep <- prepare_lmtp_data(d, tau = tau, bin_width = BIN_WIDTH)
+      # Treatment-policy: baseline-only treatment (time_varying_trt=FALSE)
+      prep <- prepare_lmtp_data(d, tau = tau, bin_width = BIN_WIDTH,
+                                time_varying_trt = FALSE)
       res <- run_lmtp_analysis(prep, folds = 2,
                                learners = c("SL.mean", "SL.glm", "SL.bayesglm"))
-      res$contrast_rd$estimates$estimate
+      rd_val <- res$contrast_rd$estimates$estimate
+      # Sanity check: RD should be within [-1, 1]
+      if (!is.finite(rd_val) || abs(rd_val) > 1) NA_real_ else rd_val
     }, error = function(e) NA_real_)
 
     setTxtProgressBar(pb, i)
