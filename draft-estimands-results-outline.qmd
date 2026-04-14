@@ -187,7 +187,7 @@ kable(truth_summary, digits = 4, format = "pipe")
 
 The treatment-policy risk difference is positive: the active drug causes early harm (HR = 1.30 before day 90), and although switching to the comparator reduces the subsequent hazard, the accumulated early risk is not fully offset. Under the no-switch strategy, where patients remain on their assigned treatment for the full 180 days, the risk difference reflects the full non-proportional hazard structure (HR = 1.30 early, HR = 0.90 late). Because the late-period hazard ratio falls below 1, sustained treatment without switching partially offsets the early harm, yielding a smaller no-switch risk difference than the treatment-policy difference. The composite strategy produces the largest risk difference because the active arm experiences substantially more switching, and switching itself counts as an event.
 
-The while-on-treatment truth differs from the no-switch truth because it conditions on not switching before 180 days. Under counterfactual uniform treatment (all-treated or all-control), non-switchers are a selected subpopulation whose switching hazard exceeded 180 days---a subset that tends to be lower-risk. The principal stratum further restricts to patients who would not switch under *either* treatment assignment.
+The while-on-treatment truth differs from the no-switch truth because follow-up is truncated at switching. Subjects who switch before 180 days contribute only their pre-switch person-time; the 180-day risk is computed under this truncation rule, not as a conditional risk among non-switchers. The principal stratum further restricts to the latent subpopulation who would not switch under *either* treatment assignment.
 
 ### When would treatment-policy and no-switch truths diverge?
 
@@ -245,7 +245,7 @@ The ICH E9(R1) addendum defines five strategies for handling intercurrent events
 
 *Counterfactual:* The target is the 180-day cumulative incidence of renal failure under baseline treatment assignment with follow-up censored at the time of switching. This is a censoring-based estimand: switching is treated as a censoring event, and the target parameter is the risk that would be observed if switching-induced censoring were non-informative (or if the censoring model correctly adjusts for it).
 
-*Truth:* Generate 500,000 all-treated and all-control subjects with switching enabled. Apply `derive_estimand("while_on_treatment")`, which censors follow-up at the switch time. Compute the Kaplan-Meier estimate of the 180-day cumulative incidence under this censoring regime. Under counterfactual uniform treatment with no dependent administrative censoring, the KM estimator is unbiased.
+*Truth:* Generate 500,000 all-treated and all-control subjects with switching enabled. The 180-day risk is computed directly as the proportion of subjects whose event occurs before both their switch time and 180 days: `mean(event_time <= min(switch_time, 180))`. Under counterfactual uniform treatment with no dependent administrative censoring, this Monte Carlo average is the exact WOT risk.
 
 *LMTP implementation:* Treatment is modelled as baseline-only (`time_varying_trt = FALSE`). Switching enters through the censoring nodes: `censor_at_switch = TRUE` encodes switching-induced censoring in the C columns alongside administrative censoring. The LMTP censoring model adjusts for the informative component of switch-censoring. This is a proper censoring-based WOT analysis, not a treatment-node intervention to prevent switching.
 
@@ -267,7 +267,9 @@ The ICH E9(R1) addendum defines five strategies for handling intercurrent events
 
 *Truth:* Generate all-treated and all-control with the same random seed for baseline covariates (`return_potential_switching = TRUE`). Draw potential switching times under both treatments using paired random number streams. Identify subjects who would not switch under either assignment (`never_switcher = 1`). Compute 180-day risk within this stratum.
 
-*LMTP implementation:* The primary simulation analysis uses the oracle `never_switcher` indicator to restrict the dataset to the true principal stratum, then estimates the 180-day risk difference within this subgroup under baseline treatment assignment (`time_varying_trt = FALSE`). This oracle analysis uses simulation-only information not available in practice, but allows clean comparison of the estimator against the principal stratum truth. A supplementary analysis restricts to observed non-switchers (`switched == 0`) as a convenience approximation; this proxy selects a different (generally lower-risk) subpopulation and is not expected to recover the oracle truth.
+*LMTP implementation:* The primary simulation analysis uses the oracle `never_switcher` indicator to restrict the dataset to the true principal stratum, then estimates the 180-day risk difference within this subgroup under baseline treatment assignment (`time_varying_trt = FALSE`). This oracle analysis uses simulation-only information not available in practice, but allows clean comparison of the estimator against the principal stratum truth. A supplementary analysis restricts to observed non-switchers (`switched == 0`) as a convenience approximation.
+
+*Principal stratum versus observed non-switchers.* The principal stratum is defined by joint potential switching outcomes under both treatment assignments: a subject belongs to the stratum if and only if they would not switch regardless of which treatment they received. This subgroup is latent — it depends on cross-world counterfactual information and cannot be identified from observed switching behaviour under a single realised treatment. By contrast, observed non-switchers are subjects who happened not to switch under their assigned treatment and observed covariate history. Because observed non-switching is a post-treatment event that depends on the realised treatment path, the set of observed non-switchers under treatment $a=1$ generally differs from the set under $a=0$, and neither coincides with the principal stratum. Restricting an analysis to observed non-switchers therefore selects a different subpopulation — typically lower-risk, since high-CKD patients are more likely to switch — and should be interpreted as a descriptive subgroup analysis or proxy, not as identification of the principal stratum estimand.
 
 ### Summary
 
@@ -470,7 +472,7 @@ stopifnot("Run R/run_cached_analyses.R first" = file.exists(sim_cache))
 sim_results <- readRDS(sim_cache)
 ```
 
-The primary comparison focuses on the treatment-policy and no-switch policies. Results for the remaining three policies are included for completeness but should be interpreted with caution: the composite LMTP analysis is known to be misspecified (the censoring model adjusts away switching, whereas the composite estimand counts switching as an event), and the principal stratum analysis uses an approximation (restricting to observed non-switchers rather than the latent never-switcher stratum).
+The primary comparison focuses on the treatment-policy and no-switch policies. Results for the remaining three strategies are included for completeness. The while-on-treatment analysis uses switch-censoring in the LMTP censoring model. The composite LMTP uses a baseline-only treatment with the composite outcome. The principal stratum analysis uses the oracle never-switcher indicator (simulation only); an observed non-switcher approximation is reported separately.
 
 ```{r}
 #| label: tbl-sim-main

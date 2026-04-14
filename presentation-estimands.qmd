@@ -282,7 +282,7 @@ if (has_truth) {
 ```
 
 ::: {.notes}
-The composite RD is large — dominated by differential switching rates, not renal failure. TP and NS are nearly identical because the post-switch hazard change is modest. WOT uses KM under censor-at-switch (not conditional on non-switching). Principal stratum restricts to oracle never-switchers. The core teaching point: the treatment effect has no single value without specifying the estimand.
+The composite RD is large — dominated by differential switching rates, not renal failure. TP and NS are nearly identical because the post-switch hazard change is modest. WOT truth is the 180-day risk under follow-up truncated at switching (direct Monte Carlo, not KM). Principal stratum restricts to oracle never-switchers. The core teaching point: the treatment effect has no single value without specifying the estimand.
 :::
 
 

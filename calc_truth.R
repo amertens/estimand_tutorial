@@ -80,16 +80,16 @@ truth_no_switch <- function(N = 500000, tau = 180, seed = 9999, ...) {
 }
 
 # ── Truth: While-on-Treatment ────────────────────────────────────────────────
-#' Compute true risks under the while-on-treatment (censor-at-switch) estimand.
-#' Generate all-treated and all-control with switching enabled, then apply
-#' derive_estimand("while_on_treatment") which censors follow-up at the
-#' switch time. The truth is the 180-day cumulative incidence under this
-#' censoring regime — NOT conditional on non-switching.
+#' Compute true 180-day risk under baseline treatment with follow-up
+#' truncated at switching.
 #'
-#' Because dep_censor=FALSE and there is no administrative censoring,
-#' the only censoring mechanism is switching. The KM estimator on this
-#' data gives the correct WOT risk (no confounding under counterfactual
-#' uniform treatment).
+#' Under counterfactual uniform treatment (treat_override) with
+#' dep_censor=FALSE, the only censoring mechanism is switching.
+#' Within each arm, all subjects share the same treatment, so the
+#' switching hazard depends only on CKD (not on treatment-by-covariate
+#' interactions that differ across subjects' treatments). The truth
+#' is computed directly as the Monte Carlo proportion of subjects
+#' whose event occurs before both their switch time and tau.
 truth_while_on_treatment <- function(N = 500000, tau = 180, seed = 9999, ...) {
   common <- list(N = N, dep_censor = FALSE, switch_on = TRUE, seed = seed)
   common <- modifyList(common, list(...))
@@ -99,33 +99,23 @@ truth_while_on_treatment <- function(N = 500000, tau = 180, seed = 9999, ...) {
   df_a0 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_control")))
 
-  # Apply censor-at-switch: follow_time = min(event, switch, admin_censor)
+  # Direct Monte Carlo risk under censor-at-switch:
+  # An event is observed if event_time <= min(switch_time, tau).
+  # With N=500,000 this is effectively exact.
+  risk_1 <- mean(df_a1$event_time <= pmin(df_a1$switch_time, tau))
+  risk_0 <- mean(df_a0$event_time <= pmin(df_a0$switch_time, tau))
+
+  # For the HR, apply derive_estimand to get the truncated follow-up
   df_a1_wot <- derive_estimand(df_a1, "while_on_treatment")
   df_a0_wot <- derive_estimand(df_a0, "while_on_treatment")
-
-  # KM-based risk at tau under switch-censoring
-  # Under counterfactual uniform treatment with no dependent admin censoring,
-  # the KM estimator is unbiased for the WOT risk.
-  sf1 <- survfit(Surv(pmin(follow_time, tau),
-                       as.integer(event == 1 & follow_time <= tau)) ~ 1,
-                 data = df_a1_wot)
-  sf0 <- survfit(Surv(pmin(follow_time, tau),
-                       as.integer(event == 1 & follow_time <= tau)) ~ 1,
-                 data = df_a0_wot)
-
-  s1 <- summary(sf1, times = tau, extend = TRUE)
-  s0 <- summary(sf0, times = tau, extend = TRUE)
-  risk_1 <- 1 - s1$surv
-  risk_0 <- 1 - s0$surv
-
   true_hr <- compute_true_hr(df_a1_wot, df_a0_wot, tau)
 
   list(estimand = "while_on_treatment",
        true_risk_1 = risk_1, true_risk_0 = risk_0,
        true_rd = risk_1 - risk_0, true_rr = risk_1 / risk_0,
        true_hr = true_hr,
-       pct_switched_a1 = mean(df_a1_wot$switched),
-       pct_switched_a0 = mean(df_a0_wot$switched),
+       pct_switched_a1 = mean(df_a1$switch_time <= tau),
+       pct_switched_a0 = mean(df_a0$switch_time <= tau),
        N = N, tau = tau)
 }
 
