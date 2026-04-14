@@ -28,7 +28,7 @@ N_SIM <- 10000
 N_ITER <- 100
 
 # Production SL library
-SL_PROD <- c("SL.mean", "SL.glm", "SL.bayesglm", "SL.glm.interaction")
+SL_PROD <- c("SL.mean", "SL.glm", "SL.bayesglm", "SL.ranger")
 CV_FOLDS <- 5
 
 # Load truth
