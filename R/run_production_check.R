@@ -142,6 +142,7 @@ if (file.exists(cache_file)) {
 
     # LMTP prod — always recompute (this is the new spec being tested)
     lmtp_prod <- tryCatch({
+      suppressWarnings({
       prep <- prepare_lmtp_data(dat, tau = tau, bin_width = BIN_WIDTH,
                                 time_varying_trt = FALSE)
       res <- run_lmtp_analysis(prep, folds = CV_FOLDS,
@@ -154,7 +155,9 @@ if (file.exists(cache_file)) {
       rd_ci <- rd_est + c(-1, 1) * 1.96 * rd_se
       list(prod_rd = rd_est, prod_ci_low = rd_ci[1], prod_ci_high = rd_ci[2],
            prod_converged = TRUE)
+      })  # end suppressWarnings
     }, error = function(e) {
+      message("    [prod error: ", conditionMessage(e), "]")
       list(prod_rd = NA, prod_ci_low = NA, prod_ci_high = NA,
            prod_converged = FALSE)
     })
