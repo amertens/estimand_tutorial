@@ -27,8 +27,8 @@ BIN_WIDTH <- 28      # monthly bins (~7 time points) for speed
 N_SIM <- 5000        # smaller N for faster SL fits
 N_ITER <- 100
 
-# Production SL library — adding xgboost to test flexible learner effect
-SL_PROD <- c("SL.mean", "SL.glm", "SL.bayesglm", "SL.xgboost")
+# Production SL library — ranger (random forest) for flexible learner
+SL_PROD <- c("SL.mean", "SL.glm", "SL.bayesglm", "SL.ranger")
 CV_FOLDS <- 2  # keep 2-fold for speed (5-fold showed no improvement)
 
 # How often to save incremental results
