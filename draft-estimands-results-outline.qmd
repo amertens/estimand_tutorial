@@ -243,11 +243,11 @@ The ICH E9(R1) addendum defines five strategies for handling intercurrent events
 
 *Target trial:* Randomise patients to active or comparator. Follow each patient only while they remain on their assigned treatment. If a patient switches, their follow-up ends at the switch time — they contribute person-time and events only while on the original regimen.
 
-*Counterfactual:* This is a conditioning estimand rather than a pure intervention. The target is the risk of renal failure by 180 days conditional on not switching: $\psi^{WOT} = E[Y^{a}(180) \mid S^{a} > 180]$, where $S^{a}$ is the potential switching time under assignment $a$.
+*Counterfactual:* The target is the 180-day cumulative incidence of renal failure under baseline treatment assignment with follow-up censored at the time of switching. This is a censoring-based estimand: switching is treated as a censoring event, and the target parameter is the risk that would be observed if switching-induced censoring were non-informative (or if the censoring model correctly adjusts for it).
 
-*Truth:* Generate 500,000 all-treated and all-control subjects with switching enabled. Restrict to subjects whose switch time exceeds 180 days (non-switchers). Compute 180-day risk within this subpopulation. This produces a conditional risk among subjects who would tolerate the assigned treatment for the full follow-up — a selected subpopulation that may differ systematically from the full population.
+*Truth:* Generate 500,000 all-treated and all-control subjects with switching enabled. Apply `derive_estimand("while_on_treatment")`, which censors follow-up at the switch time. Compute the Kaplan-Meier estimate of the 180-day cumulative incidence under this censoring regime. Under counterfactual uniform treatment with no dependent administrative censoring, the KM estimator is unbiased.
 
-*LMTP implementation:* Data are derived via `derive_estimand("while_on_treatment")`, which censors follow-up at switch time. Treatment is modelled as time-varying, and the static binary intervention holds treatment constant. The Y and C columns reflect censoring at switch, so LMTP estimates the marginal risk under sustained treatment among subjects not yet censored by switching. This is an intervention-based approximation to the conditioning-based WOT estimand; the two coincide when the no-switch intervention is close to the natural course for non-switchers.
+*LMTP implementation:* Treatment is modelled as baseline-only (`time_varying_trt = FALSE`). Switching enters through the censoring nodes: `censor_at_switch = TRUE` encodes switching-induced censoring in the C columns alongside administrative censoring. The LMTP censoring model adjusts for the informative component of switch-censoring. This is a proper censoring-based WOT analysis, not a treatment-node intervention to prevent switching.
 
 ### Composite
 
@@ -267,7 +267,7 @@ The ICH E9(R1) addendum defines five strategies for handling intercurrent events
 
 *Truth:* Generate all-treated and all-control with the same random seed for baseline covariates (`return_potential_switching = TRUE`). Draw potential switching times under both treatments using paired random number streams. Identify subjects who would not switch under either assignment (`never_switcher = 1`). Compute 180-day risk within this stratum.
 
-*LMTP implementation:* Two analyses are reported. First, an approximation that restricts to observed non-switchers (subjects with `switched == 0`), which is a convenience proxy that systematically selects lower-risk patients. Second, an oracle analysis that restricts to true never-switchers (subjects with `never_switcher == 1`), which is valid for simulation but not available in practice. In both cases, treatment is baseline-only (`time_varying_trt = FALSE`), since non-switchers and never-switchers have constant treatment throughout.
+*LMTP implementation:* The primary simulation analysis uses the oracle `never_switcher` indicator to restrict the dataset to the true principal stratum, then estimates the 180-day risk difference within this subgroup under baseline treatment assignment (`time_varying_trt = FALSE`). This oracle analysis uses simulation-only information not available in practice, but allows clean comparison of the estimator against the principal stratum truth. A supplementary analysis restricts to observed non-switchers (`switched == 0`) as a convenience approximation; this proxy selects a different (generally lower-risk) subpopulation and is not expected to recover the oracle truth.
 
 ### Summary
 
@@ -391,14 +391,15 @@ kable(lmtp_tbl, format = "pipe")
 
 Follow-up is discretised into biweekly bins (13 time points). The current Super Learner library includes `SL.mean`, `SL.glm`, and `SL.bayesglm` with 2-fold cross-validation; production analyses should use a richer library and more folds (Gruber et al. 2022).
 
-The LMTP treatment specification differs by estimand:
+The LMTP specification differs by estimand:
 
-- **Treatment-policy:** A single baseline treatment variable. The intervention sets $A = 1$ or $A = 0$ at baseline only. Post-baseline switching is part of the natural course, handled by the LMTP censoring model.
-- **No-switch and while-on-treatment:** Time-varying treatment ($A_1, \ldots, A_{13}$), reflecting the observed switching trajectory. The static binary intervention overrides all $A_j$ to hold treatment constant, directly implementing the no-switch counterfactual.
-- **Composite:** A single baseline treatment variable. Switching is encoded in the outcome (Y columns), not in the treatment nodes.
-- **Principal stratum:** A single baseline treatment variable, applied to the subset of never-switchers.
+- **Treatment-policy:** Baseline treatment only. Post-baseline switching is part of the natural course; the LMTP censoring model handles informative follow-up loss.
+- **No-switch:** Time-varying treatment ($A_1, \ldots, A_{13}$). The static binary intervention holds treatment constant at every bin, preventing switching.
+- **While-on-treatment:** Baseline treatment only. Switching enters through the censoring nodes (`censor_at_switch = TRUE`); the LMTP censoring model adjusts for informative switch-censoring. This is a censoring-based estimand, not a treatment-node intervention.
+- **Composite:** Baseline treatment only. Switching is part of the outcome (Y columns).
+- **Principal stratum:** Baseline treatment only, applied to the oracle never-switcher subset.
 
-This distinction is critical. Intervening on time-varying treatment to hold it constant is a no-switch intervention. Using baseline-only treatment and letting the censoring model handle switching is a treatment-policy analysis. Confusing the two leads to estimand–estimator mismatch.
+Three distinct mechanisms handle switching across the estimands: (1) as part of the natural course (treatment-policy), (2) as a treatment-node intervention to prevent it (no-switch), and (3) as a censoring event (while-on-treatment). Confusing these leads to estimand–estimator mismatch.
 
 ## Empirical Support Diagnostics {#sec-support}
 

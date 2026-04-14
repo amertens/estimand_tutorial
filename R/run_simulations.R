@@ -137,9 +137,9 @@ run_one_iter <- function(i, estimand = "treatment_policy",
   #     A_j reflects observed switching trajectory. static_binary_on/off
   #     OVERRIDES all A_j to hold treatment constant = no-switch intervention.
   #
-  #   while_on_treatment: TIME-VARYING A_j on dat_cox (WOT-derived).
-  #     Y/C columns reflect censoring at switch. static_binary holds constant.
-  #     Distinct label: "LMTP SDR (WOT)".
+  #   while_on_treatment: BASELINE-ONLY treatment, censor_at_switch=TRUE.
+  #     Switching enters through C columns (censoring nodes), not A columns.
+  #     LMTP censoring model adjusts for informative switch-censoring.
   #
   #   composite: BASELINE-ONLY treatment (time_varying_trt=FALSE) on dat_cox.
   #     Switching IS part of the outcome; should not intervene on A_j.
@@ -197,17 +197,15 @@ run_one_iter <- function(i, estimand = "treatment_policy",
       })
 
     } else if (estimand == "while_on_treatment") {
-      # ── Time-varying A_j on dat_raw: hold treatment constant ──
-      # WOT is a conditioning estimand, but LMTP implements an intervention.
-      # Using dat_raw (not dat_cox) with time-varying A_j and static_binary
-      # holds treatment constant = no-switch intervention. This approximates
-      # WOT when the no-switch intervention is close to the natural course
-      # for non-switchers. See Limitations for the conceptual distinction.
+      # ── Baseline-only treatment, switching as censoring ──
+      # WOT is a censor-at-switch estimand. Treatment stays baseline-only.
+      # Switching enters through the C columns (censor_at_switch=TRUE).
+      # The LMTP censoring model adjusts for informative switch-censoring.
       results[["lmtp"]] <- tryCatch({
-        n_events <- sum(dat_raw$event == 1 & dat_raw$follow_time <= tau)
-        if (n_events < 5) stop("Too few events: ", n_events)
         prep <- prepare_lmtp_data(dat_raw, tau = tau, bin_width = bin_width,
-                                  time_varying_trt = TRUE)
+                                  time_varying_trt = FALSE,
+                                  censor_at_switch = TRUE)
+        n_events <- sum(prep$data$Y1 == 1, na.rm = TRUE)  # events in first bin
         res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
         extract_lmtp(res, "LMTP SDR (WOT)")
       }, error = function(e) {
@@ -230,22 +228,12 @@ run_one_iter <- function(i, estimand = "treatment_policy",
       })
 
     } else if (estimand == "principal_stratum") {
-      # ── Baseline-only on subsets: obs non-switchers + true PS ──
-      results[["lmtp_approx"]] <- tryCatch({
-        sub <- dat_raw[dat_raw$switched == 0, ]
-        n_events <- sum(sub$event == 1 & sub$follow_time <= tau)
-        if (n_events < 5) stop("Too few events: ", n_events)
-        prep <- prepare_lmtp_data(sub, tau = tau, bin_width = bin_width,
-                                  time_varying_trt = FALSE)
-        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
-        extract_lmtp(res, "LMTP SDR (obs. non-switchers)")
-      }, error = function(e) {
-        data.frame(method = "LMTP SDR (obs. non-switchers)", hr = NA, ci_low = NA,
-                   ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
-      })
-
+      # ── Oracle principal stratum (primary) ──
+      # Restrict to true never-switchers (never_switcher == 1) identified
+      # via paired potential switching draws. This is an oracle analysis
+      # using simulation-only information not available in practice.
       if ("never_switcher" %in% names(dat_raw)) {
-        results[["lmtp_true_ps"]] <- tryCatch(
+        results[["lmtp"]] <- tryCatch(
           suppressWarnings({
             sub <- dat_raw[dat_raw$never_switcher == 1, ]
             n_events <- sum(sub$event == 1 & sub$follow_time <= tau)
@@ -253,14 +241,28 @@ run_one_iter <- function(i, estimand = "treatment_policy",
             prep <- prepare_lmtp_data(sub, tau = tau, bin_width = bin_width,
                                       time_varying_trt = FALSE)
             res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
-            extract_lmtp(res, "LMTP SDR (true PS)")
+            extract_lmtp(res, "LMTP SDR (oracle PS)")
           }),
           error = function(e) {
-            data.frame(method = "LMTP SDR (true PS)", hr = NA, ci_low = NA,
+            data.frame(method = "LMTP SDR (oracle PS)", hr = NA, ci_low = NA,
                        ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
           }
         )
       }
+
+      # ── Observed non-switcher approximation (supplementary) ──
+      results[["lmtp_approx"]] <- tryCatch({
+        sub <- dat_raw[dat_raw$switched == 0, ]
+        n_events <- sum(sub$event == 1 & sub$follow_time <= tau)
+        if (n_events < 5) stop("Too few events: ", n_events)
+        prep <- prepare_lmtp_data(sub, tau = tau, bin_width = bin_width,
+                                  time_varying_trt = FALSE)
+        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+        extract_lmtp(res, "LMTP SDR (obs. non-sw, approx)")
+      }, error = function(e) {
+        data.frame(method = "LMTP SDR (obs. non-sw, approx)", hr = NA, ci_low = NA,
+                   ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
+      })
     }
   }
 

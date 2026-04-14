@@ -2,14 +2,17 @@
 # Utility functions for the estimand-estimator simulation study.
 # Provides Cox regression variants, LMTP data preparation, and risk utilities.
 #
-# LMTP intervention logic per estimand:
-#   treatment_policy:   time_varying_trt=FALSE (baseline "treatment" only).
-#                       LMTP assigns A at baseline; censoring model handles switching.
-#   no_switch:          time_varying_trt=TRUE (A_j columns). static_binary holds
-#                       treatment constant = no-switch counterfactual.
-#   while_on_treatment: time_varying_trt=TRUE on WOT-derived data (censored at switch).
-#   composite:          time_varying_trt=FALSE on composite-derived data.
-#   principal_stratum:  time_varying_trt=FALSE on subset (never-switchers).
+# LMTP specification per estimand:
+#   treatment_policy:   time_varying_trt=FALSE, censor_at_switch=FALSE.
+#                       Baseline treatment only; censoring model handles admin censoring.
+#   no_switch:          time_varying_trt=TRUE, censor_at_switch=FALSE.
+#                       A_j columns with static_binary = hold treatment constant.
+#   while_on_treatment: time_varying_trt=FALSE, censor_at_switch=TRUE.
+#                       Baseline treatment only; switching enters through C columns.
+#   composite:          time_varying_trt=FALSE, censor_at_switch=FALSE.
+#                       Composite outcome in Y columns.
+#   principal_stratum:  time_varying_trt=FALSE, censor_at_switch=FALSE.
+#                       Baseline treatment on oracle never-switcher subset.
 
 # TODO(Joy): confirm exact file paths for the archived Cox and LMTP scripts used.
 
@@ -292,27 +295,32 @@ intervention_no_switch <- function(data, trt) {
 # ── LMTP data preparation ───────────────────────────────────────────────────
 #' Prepare wide-format data for lmtp_sdr().
 #'
-#' When time_varying_trt = TRUE: creates time-varying A_j columns reflecting
-#' the observed treatment trajectory (switches from baseline to opposite after
-#' switch_time). Used for the no-switch and WOT estimands, where the LMTP
-#' intervention holds treatment constant via static_binary_on/off.
+#' Treatment specification:
+#'   time_varying_trt = TRUE: A_j columns reflecting observed switching
+#'     trajectory. Used for no-switch (static_binary holds constant).
+#'   time_varying_trt = FALSE: baseline "treatment" only. Used for
+#'     treatment-policy, WOT, composite, principal stratum.
 #'
-#' When time_varying_trt = FALSE: uses baseline "treatment" column only as
-#' the single trt variable. Used for treatment-policy (let switching occur
-#' naturally; LMTP censoring model handles it) and composite (switching is
-#' part of the outcome, not a treatment change).
+#' Censoring specification:
+#'   censor_at_switch = FALSE (default): C columns encode only
+#'     administrative censoring (event == 0 & follow_time < tau).
+#'   censor_at_switch = TRUE: C columns encode both administrative
+#'     censoring AND switching-induced censoring. Switching is treated
+#'     as a censoring event: after switch_time, C_j = 0. Used for the
+#'     while-on-treatment (WOT) estimand.
 #'
 #' @param dat data.frame from generate_hep_data().
 #' @param tau integer; follow-up horizon in days.
 #' @param bin_width integer; days per time bin.
-#' @param time_varying_trt logical; if TRUE, create A_j columns from observed
-#'   switching trajectory. If FALSE, use baseline treatment only.
+#' @param time_varying_trt logical; create A_j columns if TRUE.
+#' @param censor_at_switch logical; include switching in C columns if TRUE.
 #' @param trt_var character; baseline treatment column name.
 #' @param switch_var character; switch time column name.
 #' @param baseline character vector of baseline covariate names.
 #' @return list with data, Y_cols, C_cols, A_cols (or NULL), baseline, n_bins.
 prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,
                               time_varying_trt = TRUE,
+                              censor_at_switch = FALSE,
                               trt_var = "treatment",
                               switch_var = "switch_time",
                               baseline = c("age", "sex_male", "ckd",
@@ -324,13 +332,30 @@ prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,
   if (tail(bin_edges, 1) < tau) bin_edges <- c(bin_edges, tau)
   n_bins <- length(bin_edges) - 1
 
-  dat <- dat %>%
-    mutate(
-      aki_event    = as.integer(event == 1 & follow_time <= tau),
-      time_to_aki  = if_else(aki_event == 1, follow_time, as.numeric(tau)),
-      cens_event   = as.integer(event == 0 & follow_time < tau),
-      time_to_cens = if_else(cens_event == 1, follow_time, as.numeric(tau))
-    )
+  # When censor_at_switch = TRUE, redefine follow-up to end at switch
+  # so that Y and C columns reflect WOT censoring.
+  if (censor_at_switch && switch_var %in% names(dat)) {
+    dat <- dat %>%
+      mutate(
+        wot_follow = pmin(event_time, .data[[switch_var]], follow_time, tau),
+        wot_event  = as.integer(event_time <= wot_follow &
+                                  event_time <= .data[[switch_var]]),
+        aki_event    = wot_event,
+        time_to_aki  = if_else(aki_event == 1, wot_follow, as.numeric(tau)),
+        # Censoring = not having the event before tau (includes both
+        # admin censoring AND switch-induced censoring)
+        cens_event   = as.integer(aki_event == 0 & wot_follow < tau),
+        time_to_cens = if_else(cens_event == 1, wot_follow, as.numeric(tau))
+      )
+  } else {
+    dat <- dat %>%
+      mutate(
+        aki_event    = as.integer(event == 1 & follow_time <= tau),
+        time_to_aki  = if_else(aki_event == 1, follow_time, as.numeric(tau)),
+        cens_event   = as.integer(event == 0 & follow_time < tau),
+        time_to_cens = if_else(cens_event == 1, follow_time, as.numeric(tau))
+      )
+  }
 
   make_Y <- function(t_aki, e) {
     as.integer(bin_edges[-1] >= t_aki & e == 1)

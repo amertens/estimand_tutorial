@@ -80,8 +80,16 @@ truth_no_switch <- function(N = 500000, tau = 180, seed = 9999, ...) {
 }
 
 # ── Truth: While-on-Treatment ────────────────────────────────────────────────
-#' Generate all-treated and all-control with switching enabled, then
-#' compute risk conditional on not switching before tau.
+#' Compute true risks under the while-on-treatment (censor-at-switch) estimand.
+#' Generate all-treated and all-control with switching enabled, then apply
+#' derive_estimand("while_on_treatment") which censors follow-up at the
+#' switch time. The truth is the 180-day cumulative incidence under this
+#' censoring regime — NOT conditional on non-switching.
+#'
+#' Because dep_censor=FALSE and there is no administrative censoring,
+#' the only censoring mechanism is switching. The KM estimator on this
+#' data gives the correct WOT risk (no confounding under counterfactual
+#' uniform treatment).
 truth_while_on_treatment <- function(N = 500000, tau = 180, seed = 9999, ...) {
   common <- list(N = N, dep_censor = FALSE, switch_on = TRUE, seed = seed)
   common <- modifyList(common, list(...))
@@ -91,19 +99,33 @@ truth_while_on_treatment <- function(N = 500000, tau = 180, seed = 9999, ...) {
   df_a0 <- do.call(generate_hep_data,
                     modifyList(common, list(treat_override = "all_control")))
 
-  ns_a1 <- df_a1$switch_time > tau
-  ns_a0 <- df_a0$switch_time > tau
+  # Apply censor-at-switch: follow_time = min(event, switch, admin_censor)
+  df_a1_wot <- derive_estimand(df_a1, "while_on_treatment")
+  df_a0_wot <- derive_estimand(df_a0, "while_on_treatment")
 
-  risk_1 <- mean(df_a1$event_time[ns_a1] <= tau)
-  risk_0 <- mean(df_a0$event_time[ns_a0] <= tau)
-  true_hr <- compute_true_hr(df_a1[ns_a1, ], df_a0[ns_a0, ], tau)
+  # KM-based risk at tau under switch-censoring
+  # Under counterfactual uniform treatment with no dependent admin censoring,
+  # the KM estimator is unbiased for the WOT risk.
+  sf1 <- survfit(Surv(pmin(follow_time, tau),
+                       as.integer(event == 1 & follow_time <= tau)) ~ 1,
+                 data = df_a1_wot)
+  sf0 <- survfit(Surv(pmin(follow_time, tau),
+                       as.integer(event == 1 & follow_time <= tau)) ~ 1,
+                 data = df_a0_wot)
+
+  s1 <- summary(sf1, times = tau, extend = TRUE)
+  s0 <- summary(sf0, times = tau, extend = TRUE)
+  risk_1 <- 1 - s1$surv
+  risk_0 <- 1 - s0$surv
+
+  true_hr <- compute_true_hr(df_a1_wot, df_a0_wot, tau)
 
   list(estimand = "while_on_treatment",
        true_risk_1 = risk_1, true_risk_0 = risk_0,
        true_rd = risk_1 - risk_0, true_rr = risk_1 / risk_0,
        true_hr = true_hr,
-       pct_nonswitcher_a1 = mean(ns_a1),
-       pct_nonswitcher_a0 = mean(ns_a0),
+       pct_switched_a1 = mean(df_a1_wot$switched),
+       pct_switched_a0 = mean(df_a0_wot$switched),
        N = N, tau = tau)
 }
 
