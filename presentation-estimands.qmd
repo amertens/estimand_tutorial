@@ -225,11 +225,11 @@ The ICH E9(R1) addendum defines five strategies for handling the same intercurre
 
 **2. Hypothetical no-switch** | Model / intervene to prevent switching | *Effect if no patient could switch — isolates the direct pharmacological effect*
 
-**3. While-on-treatment** | Censor follow-up at the time of switch | *Effect during the period patients tolerate therapy*
+**3. While-on-treatment** | Switching treated as censoring event | *180-day risk with follow-up censored at switch; LMTP censoring model adjusts for informative switching*
 
 **4. Composite** | Absorb switching into the outcome | *Risk of renal failure OR switching — conflates tolerability with safety*
 
-**5. Principal stratum** | Restrict to latent never-switchers | *Effect among patients who would not switch under either treatment*
+**5. Principal stratum** | Restrict to latent never-switchers | *Effect among patients who would not switch under either treatment; oracle analysis in simulation*
 
 :::
 
@@ -238,7 +238,7 @@ The ICH E9(R1) addendum defines five strategies for handling the same intercurre
 Each answers a **different clinical question**. Choosing among them is a scientific decision, not a statistical one.
 
 ::: {.notes}
-All five are implemented in the simulation. The primary comparison focuses on treatment-policy and no-switch. Composite and principal stratum are included for completeness but the current LMTP implementation does not provide well-matched estimators for them. Each row appears incrementally to allow discussion of each strategy before moving to the next.
+All five are implemented in the simulation with distinct LMTP specifications: baseline-only treatment (treatment-policy, composite, principal stratum), time-varying hold-constant (no-switch), and censoring-based (while-on-treatment). Principal stratum uses an oracle never-switcher indicator in simulation.
 :::
 
 ## True effects differ across estimands {.smaller}
@@ -282,7 +282,7 @@ if (has_truth) {
 ```
 
 ::: {.notes}
-The composite RD is ~0.17 — dominated by differential switching rates, not renal failure. The TP and NS are nearly identical here because the post-switch hazard change is modest. The while-on-treatment and principal stratum condition on non-switching, selecting a subpopulation. This is the core teaching point: the treatment effect has no single value without specifying the estimand.
+The composite RD is large — dominated by differential switching rates, not renal failure. TP and NS are nearly identical because the post-switch hazard change is modest. WOT uses KM under censor-at-switch (not conditional on non-switching). Principal stratum restricts to oracle never-switchers. The core teaching point: the treatment effect has no single value without specifying the estimand.
 :::
 
 
@@ -715,6 +715,8 @@ ggplot(steps_small, aes(x = 1, y = y)) +
 
 | Estimand | Cox naive | Cox censor-at-switch | LMTP SDR |
 |---|---|---|---|
-| Treatment-policy | Conditional HR (not marginal RD) | Wrong estimand (censors at switch) | Marginal RD under static intervention |
-| No-switch | Includes post-switch outcomes | Assumes non-informative censoring | Marginal RD under no-switch intervention |
-| While-on-treatment | Includes post-switch person-time | Biased if switching informative | Marginal RD via censoring model |
+| Treatment-policy | Conditional HR (not marginal RD) | Wrong estimand (censors at switch) | Baseline trt; marginal RD under static intervention |
+| No-switch | Includes post-switch outcomes | Assumes non-informative censoring | Time-varying trt; holds constant = no-switch |
+| While-on-treatment | Includes post-switch person-time | Biased if switching informative | Baseline trt; switch-censoring in C columns |
+| Composite | HR for composite endpoint | Same | Baseline trt; composite in Y columns |
+| Principal stratum | Not targeted | Not targeted | Baseline trt on oracle never-switcher subset |

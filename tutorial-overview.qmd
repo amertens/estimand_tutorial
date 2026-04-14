@@ -100,7 +100,7 @@ Several limitations should be acknowledged:
 - Implement the nonparametric sensitivity analysis (G-value and causal gap plots) discussed in the text
 - Benchmark richer Super Learner libraries against the minimal GLM specification to quantify the cost of model simplicity
 - Increase simulation iterations (to 200+) and sample sizes for final published results
-- Add the while-on-treatment estimand with inverse probability of censoring weighting
+- The while-on-treatment estimand now uses a censoring-based approach (switching in censoring nodes) rather than a treatment-node intervention; further refinement of the censoring model specification may improve performance
 - Implement continuous-time TMLE (e.g., the `concrete` R package) for baseline-treatment estimands to avoid time-binning artifacts and to incorporate competing risks
 - Address competing risks (death as a competing event for kidney failure)
 - Include a cost-benefit discussion of targeted learning versus Cox regression in terms of analyst time, computational resources, and interpretability for clinical audiences

@@ -143,3 +143,28 @@ Fix the comment block in `run_simulations.R` to accurately describe the per-esti
 2. **Manuscript Limitations section:** Update to reflect that treatment-policy and no-switch are now correctly distinguished via different LMTP specifications (baseline-only vs time-varying).
 
 3. **Code comments in run_simulations.R:** Replace the current comment block (lines 132-143) with an accurate description of the per-estimand dispatch logic.
+
+---
+
+## Post-Revision Status (April 2026)
+
+The following issues from the original audit have been resolved:
+
+| Issue | Status |
+|---|---|
+| TP LMTP targeted no-switch | **Fixed:** TP uses `time_varying_trt=FALSE` (baseline only) |
+| TP and NS LMTP were identical | **Fixed:** TP uses baseline-only; NS uses time-varying hold-constant |
+| WOT used no-switch intervention | **Fixed:** WOT now uses `censor_at_switch=TRUE` (censoring-based) |
+| WOT truth was conditional on non-switching | **Fixed:** WOT truth now uses KM under censor-at-switch |
+| Composite LMTP intervened on A_j | **Fixed:** Composite uses `time_varying_trt=FALSE` (baseline only) |
+| PS oracle was secondary to obs approximation | **Fixed:** Oracle PS is now primary estimator |
+
+Current per-estimand LMTP specification:
+
+| Estimand | `time_varying_trt` | `censor_at_switch` | How switching is handled |
+|---|---|---|---|
+| Treatment-policy | FALSE | FALSE | Natural course (in Y columns) |
+| No-switch | TRUE | FALSE | Treatment intervention (hold A_j constant) |
+| While-on-treatment | FALSE | TRUE | Censoring event (in C columns) |
+| Composite | FALSE | FALSE | Part of outcome (in Y columns) |
+| Principal stratum | FALSE | FALSE | Oracle subset (never_switcher) |
