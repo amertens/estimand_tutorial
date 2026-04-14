@@ -23,8 +23,8 @@ source(here("DGP.R"))
 source(here("R", "helpers.R"))
 
 tau <- 180
-BIN_WIDTH <- 14
-N_SIM <- 10000
+BIN_WIDTH <- 28      # monthly bins (~7 time points) for speed
+N_SIM <- 5000        # smaller N for faster SL fits
 N_ITER <- 100
 
 # Production SL library — start simple to diagnose CV vs library effect
