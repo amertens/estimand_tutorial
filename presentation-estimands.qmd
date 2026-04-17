@@ -125,7 +125,7 @@ Frame the talk: this is not about a specific drug. It is about the analytical ch
 ::::
 
 ::: {.notes}
-This is a simulated example calibrated to the published nephrotoxicity literature. The DGP uses HR=1.30 in the first 90 days, HR=0.90 after, with informative switching.
+This is a simulated example calibrated to the published nephrotoxicity literature. The DGP uses HR=2.0 in the first 90 days, HR=0.90 after, with informative switching (~11% by 180 days).
 :::
 
 ## The causal roadmap {.smaller}
@@ -282,7 +282,7 @@ if (has_truth) {
 ```
 
 ::: {.notes}
-The composite RD is large — dominated by differential switching rates, not renal failure. TP and NS are nearly identical because the post-switch hazard change is modest. WOT truth is the 180-day risk under follow-up truncated at switching (direct Monte Carlo, not KM). Principal stratum restricts to oracle never-switchers. The core teaching point: the treatment effect has no single value without specifying the estimand.
+The composite RD is large — dominated by differential switching rates, not renal failure. TP (+7.1%) and NS (+9.1%) differ by 2 percentage points because ~11% of patients switch, partially mitigating early harm. WOT truth (+6.4%) is the 180-day risk under follow-up truncated at switching. Principal stratum (+9.0%) restricts to oracle never-switchers (~19% of population). The core teaching point: the treatment effect has no single value without specifying the estimand.
 :::
 
 
@@ -389,7 +389,7 @@ Key principle: the estimator must be chosen to target the parameter defined by t
 timeline <- tibble(
   phase = c("Early period\n(0–90 days)", "Late period\n(90–180 days)"),
   x = c(45, 135),
-  hr = c("HR = 1.30", "HR = 0.90"),
+  hr = c("HR = 2.0", "HR = 0.90"),
   note = c("TDF increases\nrenal risk", "Effect attenuates,\nmodest reversal")
 )
 
@@ -400,14 +400,14 @@ ggplot() +
   annotate("rect", xmin = 90, xmax = 180, ymin = -0.15, ymax = 0.15,
            fill = "steelblue", alpha = 0.3) +
   # Labels
-  annotate("text", x = 45, y = 0.35, label = "HR = 1.30\n(early harm)",
+  annotate("text", x = 45, y = 0.35, label = "HR = 2.0\n(early harm)",
            size = 5, fontface = "bold", color = "tomato") +
   annotate("text", x = 135, y = 0.35, label = "HR = 0.90\n(attenuated)",
            size = 5, fontface = "bold", color = "steelblue") +
   # Switching annotation
   annotate("segment", x = 60, xend = 60, y = -0.15, yend = -0.4,
            arrow = arrow(length = unit(0.2, "cm")), color = "darkorange") +
-  annotate("text", x = 60, y = -0.55, label = "~12% switch\n(informative)",
+  annotate("text", x = 60, y = -0.55, label = "~11% switch\n(informative)",
            size = 4, color = "darkorange") +
   # Axis
   annotate("segment", x = 0, xend = 180, y = 0, yend = 0,
@@ -424,7 +424,43 @@ ggplot() +
 ```
 
 ::: {.notes}
-The DGP is calibrated to the published hepatitis B nephrotoxicity literature. Treatment assignment is confounded by CKD, cirrhosis, and age. Switching is driven by treatment and CKD, making it informative. The non-proportional hazard structure means any single HR is a time-averaged summary.
+The DGP uses HR=2.0 (early) and HR=0.90 (late) with ~16% event rate and ~11% switching. Treatment assignment is confounded by CKD, cirrhosis, and age. Switching is driven by treatment and CKD, making it informative. The non-proportional hazard structure means any single HR is a time-averaged summary.
+:::
+
+
+## Performance metrics {.smaller}
+
+Each simulated dataset is analysed with four estimators. We summarise performance on two scales:
+
+:::: {.columns}
+::: {.column width="50%"}
+**Estimand scale (risk difference)**
+
+- True RD is known by Monte Carlo (N = 500,000 per arm)
+- **Bias** = mean estimate − truth
+- **RD coverage** = proportion of 95% CIs containing truth
+  - LMTP: analytic via efficient influence function
+  - Cox: bootstrap (200 replicates) on KM risk difference
+:::
+
+::: {.column width="50%"}
+**Estimator scale (hazard ratio)**
+
+- True marginal HR from a Cox regression on counterfactual potential outcomes
+- **HR coverage** = proportion of Cox HR CIs containing the true marginal HR
+- LMTP does not target an HR; not evaluated on this scale
+:::
+::::
+
+. . .
+
+Reporting both exposes distinct failure modes:
+
+- **Wrong scale:** the Cox HR reports on a scale that does not correspond to the estimand
+- **Wrong adjustment:** even on its own HR scale, Cox fails to recover the correct marginal HR when confounding or informative switching is present
+
+::: {.notes}
+Bias on the HR scale is sensitive to the non-collapsibility of the HR; we focus on coverage. The true marginal HR is computed via compute_true_hr in calc_truth.R, which fits coxph(Surv ~ trt) on the combined counterfactual all-treated and all-control datasets.
 :::
 
 
@@ -436,8 +472,10 @@ The DGP is calibrated to the published hepatitis B nephrotoxicity literature. Tr
 # Load cached LMTP results (no live simulation in the presentation)
 # Cox fits are fast enough to run inline
 set.seed(2026)
-dat <- generate_hep_data(N = 10000, np_hazard = TRUE, dep_censor = TRUE,
-                         complexity = TRUE, seed = 2026)
+dat <- generate_hep_data(N = 10000, h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
+                         np_hazard = TRUE, dep_censor = TRUE, complexity = FALSE,
+                         lambda_sw0 = 1e-3, gamma_A = 0.80, gamma_ckd = 0.60,
+                         seed = 2026)
 tau <- 180
 covars <- c("age", "ckd", "cirrhosis", "diabetes", "heart_failure")
 
@@ -450,9 +488,9 @@ results_single <- tibble(
   Analysis = c("Cox (baseline trt)", "Cox (censor at switch)", "LMTP SDR"),
   Scale = c("HR", "HR", "RD"),
   Estimate = c(round(cox_n$hr, 3), round(cox_cs$hr, 3),
-               if (has_lmtp) round(lmtp_res$contrast_rd$estimates$estimate, 4) else NA),
+               if (has_lmtp) round(-lmtp_res$contrast_rd$estimates$estimate, 4) else NA),
   `KM RD` = c(round(km_n$risk_diff, 4), round(km_cs$risk_diff, 4),
-              if (has_lmtp) round(lmtp_res$contrast_rd$estimates$estimate, 4) else NA),
+              if (has_lmtp) round(-lmtp_res$contrast_rd$estimates$estimate, 4) else NA),
   `True TP RD` = rep(if (has_truth) round(truth_all$treatment_policy$true_rd, 4) else NA, 3)
 )
 
@@ -476,7 +514,11 @@ Do not compare the Cox HR and LMTP RD as though they estimate the same quantity.
 #| fig-width: 10
 #| fig-height: 5
 
-sim_cache <- here("results", "sim_study_main.rds")
+# Prefer production cache; fall back to test cache if production not yet complete
+sim_cache <- if (file.exists(here("results", "sim_study_main.rds")))
+               here("results", "sim_study_main.rds")
+             else
+               here("results", "sim_study_test.rds")
 has_sim <- file.exists(sim_cache)
 
 if (has_sim && has_truth) {
@@ -506,7 +548,8 @@ if (has_sim && has_truth) {
                linewidth = 1) +
     scale_fill_manual(values = pal[1:4]) +
     labs(x = "Risk difference", y = "Count", fill = "Estimator",
-         title = "Distribution of RD estimates across 20 iterations (N = 10,000)",
+         title = sprintf("Distribution of RD estimates across %d iterations (N = 10,000)",
+                         length(unique(sim_plot$iter))),
          subtitle = "Dashed line: true risk difference") +
     theme(legend.position = "bottom")
 } else {
@@ -521,7 +564,7 @@ if (has_sim && has_truth) {
 ```
 
 ::: {.notes}
-This slide loads from cached simulation results. If the cache does not exist, a placeholder is shown. The simulation compares Cox naive, Cox censor-at-switch, and LMTP SDR across 20 iterations for the treatment-policy and no-switch estimands.
+This slide loads from cached simulation results. The presentation prefers the 60-iteration production cache (`sim_study_main.rds`) and falls back to the 5-iteration test cache (`sim_study_test.rds`) while the production run is in progress. The simulation compares four estimators: Cox naive, Cox censor-at-switch, Cox IPCW, and LMTP SDR. We report two performance metrics: (1) RD bias and RD coverage, comparing the 95% CI for the risk difference (bootstrap for Cox KM-RD; efficient influence function for LMTP) against the true marginal RD; (2) HR coverage for Cox methods, comparing the model-based HR CI against the true marginal HR. DGP: HR_early=2.0, HR_late=0.90, ~11% switching, ~16% event rate, ~19% never-switchers.
 :::
 
 
@@ -536,13 +579,15 @@ Even an aligned estimator fails when the data do not support the target interven
 
 # Small datasets for the switching probability illustration (fast, N=2000)
 set.seed(101)
-dat_good_sm <- generate_hep_data(N = 2000, np_hazard = TRUE, dep_censor = TRUE,
-                                  complexity = TRUE, seed = 101)
+dat_good_sm <- generate_hep_data(N = 2000, h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
+                                  np_hazard = TRUE, dep_censor = TRUE, complexity = FALSE,
+                                  lambda_sw0 = 1e-3, gamma_A = 0.80, gamma_ckd = 0.60,
+                                  seed = 101)
 set.seed(103)
-dat_poor_sm <- generate_hep_data(N = 2000, np_hazard = TRUE, dep_censor = TRUE,
-                                  complexity = TRUE,
-                                  gamma_A = 2.5, gamma_ckd = 2.0,
-                                  lambda_sw0 = 1e-2, seed = 103)
+dat_poor_sm <- generate_hep_data(N = 2000, h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
+                                  np_hazard = TRUE, dep_censor = TRUE, complexity = FALSE,
+                                  gamma_A = 2.0, gamma_ckd = 1.5,
+                                  lambda_sw0 = 8e-3, seed = 103)
 
 sw_good <- glm(switched ~ age + ckd + treatment + cirrhosis,
                data = dat_good_sm, family = binomial)
@@ -551,9 +596,9 @@ sw_poor <- glm(switched ~ age + ckd + treatment + cirrhosis,
 
 combined <- bind_rows(
   dat_good_sm %>% mutate(p_switch = predict(sw_good, type = "response"),
-                          Scenario = "Good support (~12% switching)"),
+                          Scenario = "Good support (~11% switching)"),
   dat_poor_sm %>% mutate(p_switch = predict(sw_poor, type = "response"),
-                          Scenario = "Poor support (~65% switching)")
+                          Scenario = "Poor support (~50% switching)")
 ) %>%
   mutate(trt_label = ifelse(treatment == 1, "Active (TDF)", "Comparator (ETV)"))
 
@@ -701,8 +746,8 @@ ggplot(steps_small, aes(x = 1, y = y)) +
 
 | Parameter | Value | Description |
 |---|---|---|
-| `h0` | 5 $\times$ 10$^{-4}$ | Baseline hazard |
-| `HR_early` | 1.30 | TDF vs ETV, first 90 days |
+| `h0` | 5 $\times$ 10$^{-3}$ | Baseline hazard |
+| `HR_early` | 2.0 | TDF vs ETV, first 90 days |
 | `HR_late` | 0.90 | TDF vs ETV, after 90 days |
 | `lambda_sw0` | 1.0 $\times$ 10$^{-3}$ | Baseline switching hazard |
 | `gamma_A` | 0.80 | log-HR for treatment on switching |

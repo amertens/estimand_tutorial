@@ -22,7 +22,7 @@ generate_hep_data <- function(
     gamma_ckd       = 0.60,       # log-HR per CKD on switch
     ## misc
     censor_base     = 1/100,      # admin censoring rate
-    treat_override  = c("simulate", "all_treated", "all_control"),
+    treat_override  = c("simulate", "random", "all_treated", "all_control"),
     return_potential_switching = FALSE,
     add_missing     = FALSE,
     impute          = FALSE,
@@ -70,6 +70,8 @@ generate_hep_data <- function(
     alpha0  <- qlogis(p_trt_target) - mean(lp0)
     p_trt   <- plogis(alpha0 + lp0) |> pmin(0.95) |> pmax(0.05)
     cohort$treatment <- rbinom(nrow(cohort), 1, p_trt)
+  } else if (treat_override == "random") {
+    cohort$treatment <- rbinom(nrow(cohort), 1, p_trt_target)
   } else {
     cohort$treatment <- ifelse(treat_override == "all_treated", 1L, 0L)
   }

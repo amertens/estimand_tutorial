@@ -48,27 +48,31 @@ run_one_iter <- function(i, estimand = "treatment_policy",
                          dgp_args = list()) {
   set.seed(1000 + i)
 
-  # Generate ONE dataset under treatment-policy (switching occurs, does not censor).
-  # Derive estimand-specific outcomes via derive_estimand().
-  # For no_switch: generate separately with switch_on=FALSE.
+  # Generate dataset(s) for this iteration.
+  #
+  # For no_switch: we need TWO datasets with the same seed:
+  #   - dat_noswitch (switch_on=FALSE): used by Cox, where truth = outcomes
+  #     under sustained treatment with no switching at all.
+  #   - dat_raw (switch_on=TRUE): used by LMTP, which observes the switching
+  #     process and intervenes to hold treatment constant via time-varying A_j.
+  #     LMTP needs to see the observed switching to learn the switching model,
+  #     then overrides it with the static intervention.
+  #
+  # For all other estimands: one dataset with switch_on=TRUE.
+  args_sw <- modifyList(
+    list(N = sample_size, switch_on = TRUE, seed = 1000 + i),
+    dgp_args
+  )
+  dat_raw <- do.call(generate_hep_data, args_sw)
+
   if (estimand == "no_switch") {
-    args <- modifyList(
+    args_nosw <- modifyList(
       list(N = sample_size, switch_on = FALSE, seed = 1000 + i),
       dgp_args
     )
-  } else {
-    args <- modifyList(
-      list(N = sample_size, switch_on = TRUE, seed = 1000 + i),
-      dgp_args
-    )
-  }
-  dat_raw <- do.call(generate_hep_data, args)
-
-  # Apply estimand-specific outcome/censoring definition for Cox analyses.
-  # LMTP uses dat_raw (or dat_raw subsets) directly — it handles switching
-  # through its own treatment/censoring model, not through pre-derived
-  # follow_time/event columns.
-  if (estimand %in% c("while_on_treatment", "composite")) {
+    dat_noswitch <- do.call(generate_hep_data, args_nosw)
+    dat_cox <- dat_noswitch
+  } else if (estimand %in% c("while_on_treatment", "composite")) {
     dat_cox <- derive_estimand(dat_raw, estimand)
   } else {
     dat_cox <- dat_raw
@@ -81,49 +85,80 @@ run_one_iter <- function(i, estimand = "treatment_policy",
 
   results <- list()
 
+  # Helper: build Cox result row with HR CI and bootstrap KM-RD CI
+  make_cox_row <- function(fit, dat_for_km, label, tau, weights = NULL) {
+    km  <- km_risk_at(fit$survfit, t = tau)
+    km_rr <- if (km$risk_ctrl > 0) km$risk_trt / km$risk_ctrl else NA_real_
+    # Bootstrap KM risk difference CI (200 replicates)
+    rd_ci <- boot_km_rd_ci(dat_for_km, t = tau, n_boot = 200, weights = weights)
+    data.frame(
+      method = label, hr = fit$hr,
+      hr_ci_low = fit$ci_low, hr_ci_high = fit$ci_high,
+      ci_low = rd_ci$rd_ci_low, ci_high = rd_ci$rd_ci_high,
+      risk_diff = km$risk_diff, risk_ratio = km_rr, converged = TRUE
+    )
+  }
+
+  cox_fail <- function(label) {
+    data.frame(method = label, hr = NA,
+               hr_ci_low = NA, hr_ci_high = NA,
+               ci_low = NA, ci_high = NA,
+               risk_diff = NA, risk_ratio = NA, converged = FALSE)
+  }
+
   # ── A. Naive Cox (ignores switching) ──
   results[["cox_naive"]] <- tryCatch({
     fit <- fit_cox_naive(dat_cox, tau = tau, covars = covars)
-    km  <- km_risk_at(fit$survfit, t = tau)
-    km_rr <- if (km$risk_ctrl > 0) km$risk_trt / km$risk_ctrl else NA_real_
-    data.frame(
-      method = "Cox naive", hr = fit$hr,
-      ci_low = fit$ci_low, ci_high = fit$ci_high,
-      risk_diff = km$risk_diff, risk_ratio = km_rr, converged = TRUE
-    )
-  }, error = function(e) {
-    data.frame(method = "Cox naive", hr = NA, ci_low = NA, ci_high = NA,
-               risk_diff = NA, risk_ratio = NA, converged = FALSE)
-  })
+    dat_km <- dat_cox %>%
+      mutate(time_use = pmin(follow_time, tau),
+             event_use = as.integer(event == 1 & follow_time <= tau))
+    make_cox_row(fit, dat_km, "Cox naive", tau)
+  }, error = function(e) cox_fail("Cox naive"))
 
   # ── B. Cox censor at switch ──
   results[["cox_censor"]] <- tryCatch({
     fit <- fit_cox_censor_switch(dat_cox, tau = tau, covars = covars)
-    km  <- km_risk_at(fit$survfit, t = tau)
-    km_rr <- if (km$risk_ctrl > 0) km$risk_trt / km$risk_ctrl else NA_real_
-    data.frame(
-      method = "Cox censor-at-switch", hr = fit$hr,
-      ci_low = fit$ci_low, ci_high = fit$ci_high,
-      risk_diff = km$risk_diff, risk_ratio = km_rr, converged = TRUE
-    )
-  }, error = function(e) {
-    data.frame(method = "Cox censor-at-switch", hr = NA, ci_low = NA,
-               ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
-  })
+    # Prepare censored-at-switch KM data for bootstrap
+    dat_cs <- dat_cox %>%
+      mutate(time_use = pmin(follow_time, tau),
+             event_use = as.integer(event == 1 & follow_time <= tau))
+    if ("switch_time" %in% names(dat_cs)) {
+      sw_b <- dat_cs$switched == 1 & dat_cs$switch_time < dat_cs$time_use
+      dat_cs$time_use[sw_b]  <- pmin(dat_cs$switch_time[sw_b], tau)
+      dat_cs$event_use[sw_b] <- 0L
+    }
+    make_cox_row(fit, dat_cs, "Cox censor-at-switch", tau)
+  }, error = function(e) cox_fail("Cox censor-at-switch"))
 
-  # ── C. Cox time-dependent treatment (optional) ──
+  # ── C. Cox IPCW (censor at switch with inverse probability weights) ──
+  results[["cox_ipcw"]] <- tryCatch({
+    fit <- fit_cox_ipcw(dat_cox, tau = tau, covars = covars)
+    # For IPCW bootstrap, use the censored-at-switch data with IPCW weights
+    # Recompute the weights inline for the bootstrap data
+    dat_ipcw <- dat_cox %>%
+      mutate(time_use = pmin(follow_time, tau),
+             event_use = as.integer(event == 1 & follow_time <= tau),
+             sw_time = if ("switch_time" %in% names(.)) switch_time else Inf,
+             did_switch = as.integer(switched == 1 & sw_time < time_use))
+    dat_ipcw <- dat_ipcw %>%
+      mutate(time_use = ifelse(did_switch == 1, pmin(sw_time, tau), time_use),
+             event_use = ifelse(did_switch == 1, 0L, event_use))
+    # Extract weights from the fitted model if available
+    w <- if (!is.null(fit$model$weights)) fit$model$weights else NULL
+    make_cox_row(fit, dat_ipcw, "Cox IPCW", tau, weights = w)
+  }, error = function(e) cox_fail("Cox IPCW"))
+
+  # ── D. Cox time-dependent treatment (optional) ──
   if (run_cox_td) {
     results[["cox_td"]] <- tryCatch({
       fit <- fit_cox_td(dat_cox, tau = tau, covars = covars)
       data.frame(
         method = "Cox time-dependent", hr = fit$hr,
-        ci_low = fit$ci_low, ci_high = fit$ci_high,
+        hr_ci_low = fit$ci_low, hr_ci_high = fit$ci_high,
+        ci_low = NA_real_, ci_high = NA_real_,
         risk_diff = NA_real_, risk_ratio = NA_real_, converged = TRUE
       )
-    }, error = function(e) {
-      data.frame(method = "Cox time-dependent", hr = NA, ci_low = NA,
-                 ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
-    })
+    }, error = function(e) cox_fail("Cox time-dependent"))
   }
 
   # ── D. LMTP SDR ──
@@ -148,18 +183,23 @@ run_one_iter <- function(i, estimand = "treatment_policy",
   #     Never-switchers have constant A_j anyway.
 
   # Helper to extract LMTP contrasts (handles old and new API)
+  # Note: lmtp_contrast(type="additive") returns S(1)-S(0) on the survival scale.
+  # Truth is computed as R(1)-R(0) = -(S(1)-S(0)). Negate to match risk scale.
   extract_lmtp <- function(res, label) {
     rd_obj <- res$contrast_rd
-    rd_est <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$estimate
-              else rd_obj$vals$theta
-    rd_se  <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$std.error
-              else rd_obj$vals$std.error
-    rd_ci  <- rd_est + c(-1, 1) * 1.96 * rd_se
+    rd_surv <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$estimate
+               else rd_obj$vals$theta
+    rd_se   <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$std.error
+               else rd_obj$vals$std.error
+    # Convert from survival scale to risk scale
+    rd_est <- -rd_surv
+    rd_ci  <- -(rd_surv + c(1, -1) * 1.96 * rd_se)  # negate and swap bounds
     rr_obj <- res$contrast_rr
     rr_est <- if (!is.null(rr_obj$estimates)) rr_obj$estimates$estimate
               else rr_obj$vals$theta
     data.frame(
       method = label, hr = NA_real_,
+      hr_ci_low = NA_real_, hr_ci_high = NA_real_,
       ci_low = rd_ci[1], ci_high = rd_ci[2],
       risk_diff = rd_est, risk_ratio = rr_est, converged = TRUE
     )
@@ -178,12 +218,12 @@ run_one_iter <- function(i, estimand = "treatment_policy",
         res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
         extract_lmtp(res, "LMTP SDR")
       }, error = function(e) {
-        data.frame(method = "LMTP SDR", hr = NA, ci_low = NA,
-                   ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
+        data.frame(method = "LMTP SDR", hr = NA, hr_ci_low = NA, hr_ci_high = NA,
+                   ci_low = NA, ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
       })
 
     } else if (estimand == "no_switch") {
-      # ── Time-varying A_j on no-switch data: hold treatment constant ──
+      # ── Time-varying A_j on switching data: static intervention holds constant ──
       results[["lmtp"]] <- tryCatch({
         n_events <- sum(dat_raw$event == 1 & dat_raw$follow_time <= tau)
         if (n_events < 5) stop("Too few events: ", n_events)
@@ -192,8 +232,8 @@ run_one_iter <- function(i, estimand = "treatment_policy",
         res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
         extract_lmtp(res, "LMTP SDR (no-switch)")
       }, error = function(e) {
-        data.frame(method = "LMTP SDR (no-switch)", hr = NA, ci_low = NA,
-                   ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
+        data.frame(method = "LMTP SDR (no-switch)", hr = NA, hr_ci_low = NA, hr_ci_high = NA,
+                   ci_low = NA, ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
       })
 
     } else if (estimand == "while_on_treatment") {
@@ -209,8 +249,8 @@ run_one_iter <- function(i, estimand = "treatment_policy",
         res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
         extract_lmtp(res, "LMTP SDR (WOT)")
       }, error = function(e) {
-        data.frame(method = "LMTP SDR (WOT)", hr = NA, ci_low = NA,
-                   ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
+        data.frame(method = "LMTP SDR (WOT)", hr = NA, hr_ci_low = NA, hr_ci_high = NA,
+                   ci_low = NA, ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
       })
 
     } else if (estimand == "composite") {
@@ -223,8 +263,8 @@ run_one_iter <- function(i, estimand = "treatment_policy",
         res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
         extract_lmtp(res, "LMTP SDR (composite)")
       }, error = function(e) {
-        data.frame(method = "LMTP SDR (composite)", hr = NA, ci_low = NA,
-                   ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
+        data.frame(method = "LMTP SDR (composite)", hr = NA, hr_ci_low = NA, hr_ci_high = NA,
+                   ci_low = NA, ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
       })
 
     } else if (estimand == "principal_stratum") {
@@ -244,8 +284,8 @@ run_one_iter <- function(i, estimand = "treatment_policy",
             extract_lmtp(res, "LMTP SDR (oracle PS)")
           }),
           error = function(e) {
-            data.frame(method = "LMTP SDR (oracle PS)", hr = NA, ci_low = NA,
-                       ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
+            data.frame(method = "LMTP SDR (oracle PS)", hr = NA, hr_ci_low = NA, hr_ci_high = NA,
+                       ci_low = NA, ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
           }
         )
       }
@@ -260,8 +300,8 @@ run_one_iter <- function(i, estimand = "treatment_policy",
         res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
         extract_lmtp(res, "LMTP SDR (obs. non-sw, approx)")
       }, error = function(e) {
-        data.frame(method = "LMTP SDR (obs. non-sw, approx)", hr = NA, ci_low = NA,
-                   ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
+        data.frame(method = "LMTP SDR (obs. non-sw, approx)", hr = NA, hr_ci_low = NA, hr_ci_high = NA,
+                   ci_low = NA, ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
       })
     }
   }
@@ -485,6 +525,11 @@ summarize_simulation <- function(sim_results, truth_rd = NA, truth_rr = NA,
                      else NA_real_,
       coverage_rd  = if (!is.na(truth_rd))
                        mean(ci_low <= truth_rd & ci_high >= truth_rd,
+                            na.rm = TRUE)
+                     else NA_real_,
+      # HR coverage (Cox methods; requires hr_ci_low/hr_ci_high)
+      coverage_hr  = if (!is.na(truth_hr) && "hr_ci_low" %in% names(sim_results))
+                       mean(hr_ci_low <= truth_hr & hr_ci_high >= truth_hr,
                             na.rm = TRUE)
                      else NA_real_,
       # RR summaries

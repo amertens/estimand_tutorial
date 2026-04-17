@@ -226,6 +226,91 @@ fit_cox_td <- function(dat, tau = 180,
 }
 
 
+# ── Cox: IPCW-weighted (censor at switch, adjust for informative censoring) ─
+#' Fit an IPCW-weighted Cox model that censors at switch but reweights
+#' to account for informative censoring from switching. This is the
+#' standard pharmacoepi approach for hypothetical/WOT estimands.
+#'
+#' The switching model is a pooled logistic regression of switching on
+#' treatment, baseline covariates, and (optionally) time. Stabilised
+#' weights are used to reduce variance.
+#'
+#' @param dat data.frame from generate_hep_data() with switch_time, switched.
+#' @param tau numeric; follow-up horizon.
+#' @param covars character vector of baseline covariates for the outcome model.
+#' @param weight_covars character vector of covariates for the switching model.
+#'   Defaults to covars plus treatment.
+#' @return list with hr, ci_low, ci_high, survfit.
+fit_cox_ipcw <- function(dat, tau = 180,
+                         covars = c("age", "ckd", "cirrhosis", "diabetes",
+                                    "heart_failure"),
+                         weight_covars = NULL) {
+  covars <- intersect(covars, names(dat))
+  if (is.null(weight_covars)) weight_covars <- covars
+
+  dat <- dat %>%
+    mutate(
+      time_use  = pmin(follow_time, tau),
+      event_use = as.integer(event == 1 & follow_time <= tau),
+      sw_time   = if ("switch_time" %in% names(.)) switch_time else Inf,
+      did_switch = as.integer(switched == 1 & sw_time < time_use)
+    )
+
+  # If nobody switches, IPCW reduces to naive Cox (no reweighting needed)
+  if (sum(dat$did_switch) == 0) {
+    return(fit_cox_naive(dat, tau = tau, covars = covars))
+  }
+
+  # Censor at switch (same as fit_cox_censor_switch)
+  dat <- dat %>%
+    mutate(
+      time_ipcw  = ifelse(did_switch == 1, pmin(sw_time, tau), time_use),
+      event_ipcw = ifelse(did_switch == 1, 0L, event_use)
+    )
+
+  # Fit switching model: P(switch by min(time_use, tau) | treatment, W)
+  sw_fml <- as.formula(paste0(
+    "did_switch ~ treatment + ", paste(weight_covars, collapse = " + ")
+  ))
+  sw_fit <- glm(sw_fml, data = dat, family = binomial())
+  p_switch <- predict(sw_fit, type = "response")
+
+  # Stabilised IPCW weights:
+  #   For non-switchers: w = P(no switch | marginal) / P(no switch | A, W)
+  #   For switchers: censored, so their weight doesn't matter (event_ipcw = 0)
+  p_switch_marginal <- mean(dat$did_switch)
+  w_unstab <- 1 / pmax(1 - p_switch, 0.01)
+  w_stab   <- (1 - p_switch_marginal) * w_unstab
+  # Switchers get weight 1 (they're censored, weight is irrelevant)
+  dat$ipcw <- ifelse(dat$did_switch == 1, 1, w_stab)
+  # Truncate extreme weights at 99th percentile
+  w99 <- quantile(dat$ipcw, 0.99)
+  dat$ipcw <- pmin(dat$ipcw, w99)
+
+  fml <- as.formula(paste0(
+    "Surv(time_ipcw, event_ipcw) ~ treatment + ",
+    paste(covars, collapse = " + ")
+  ))
+
+  cox_fit <- coxph(fml, data = dat, weights = ipcw, robust = TRUE)
+  hr_est  <- exp(coef(cox_fit)["treatment"])
+  # Use robust SE for CI (vcov extracts the correct variance matrix)
+  robust_se <- sqrt(vcov(cox_fit)["treatment", "treatment"])
+  hr_ci <- exp(coef(cox_fit)["treatment"] + c(-1, 1) * 1.96 * robust_se)
+
+  sf <- survfit(Surv(time_ipcw, event_ipcw) ~ treatment, data = dat,
+                weights = dat$ipcw)
+
+  list(
+    model   = cox_fit,
+    hr      = hr_est,
+    ci_low  = hr_ci[1],
+    ci_high = hr_ci[2],
+    survfit = sf
+  )
+}
+
+
 # ── LMTP intervention functions ─────────────────────────────────────────────
 # These define the target interventions for lmtp_sdr().
 
@@ -324,6 +409,7 @@ prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,
                               trt_var = "treatment",
                               switch_var = "switch_time",
                               baseline = c("age", "sex_male", "ckd",
+                                           "cirrhosis", "nsaid",
                                            "diabetes", "hypertension",
                                            "heart_failure")) {
   baseline <- intersect(baseline, names(dat))
@@ -588,6 +674,38 @@ km_risk_at <- function(sf, t) {
   risks <- 1 - s$surv
   list(risk_ctrl = risks[1], risk_trt = risks[2],
        risk_diff = risks[2] - risks[1])
+}
+
+#' Bootstrap confidence interval for the KM risk difference.
+#' @param dat data.frame with time_use, event_use, treatment columns.
+#' @param t time point for risk extraction.
+#' @param n_boot integer; number of bootstrap replicates.
+#' @param weights optional numeric vector of observation weights.
+#' @return named list: rd, rd_ci_low, rd_ci_high.
+boot_km_rd_ci <- function(dat, t, n_boot = 200, weights = NULL) {
+  rd_boot <- numeric(n_boot)
+  n <- nrow(dat)
+  for (b in seq_len(n_boot)) {
+    idx <- sample.int(n, n, replace = TRUE)
+    d_b <- dat[idx, ]
+    if (!is.null(weights)) {
+      w_b <- weights[idx]
+      sf_b <- tryCatch(
+        survfit(Surv(time_use, event_use) ~ treatment, data = d_b, weights = w_b),
+        error = function(e) NULL)
+    } else {
+      sf_b <- tryCatch(
+        survfit(Surv(time_use, event_use) ~ treatment, data = d_b),
+        error = function(e) NULL)
+    }
+    if (is.null(sf_b)) { rd_boot[b] <- NA; next }
+    km_b <- km_risk_at(sf_b, t)
+    rd_boot[b] <- km_b$risk_diff
+  }
+  rd_boot <- rd_boot[!is.na(rd_boot)]
+  if (length(rd_boot) < 10) return(list(rd_ci_low = NA, rd_ci_high = NA))
+  list(rd_ci_low = quantile(rd_boot, 0.025),
+       rd_ci_high = quantile(rd_boot, 0.975))
 }
 
 #' Extract hazard ratio and CI from a coxph fit.

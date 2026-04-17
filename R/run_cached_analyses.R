@@ -34,7 +34,14 @@ source(here("calc_truth.R"))
 truth_cache <- here("results", "sim_results", "ground_truth.rds")
 if (!file.exists(truth_cache)) {
   message("=== Computing ground truth (5 estimands x 500K subjects) ===")
-  dgp_args <- list(np_hazard = TRUE, complexity = TRUE, switch_on = TRUE)
+  # Note: do NOT include switch_on here — each truth function sets it
+  # internally (TRUE for TP/WOT/COMP/PS, FALSE for NS). Including it
+  # here would override the function's own setting via modifyList.
+  dgp_args <- list(
+    h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
+    np_hazard = TRUE, complexity = FALSE,
+    lambda_sw0 = 1e-3, gamma_A = 0.80, gamma_ckd = 0.60
+  )
 
   message("  Treatment-policy...")
   truth_tp <- do.call(truth_treatment_policy,
@@ -87,8 +94,10 @@ if (!file.exists(lmtp_cache)) {
 
   set.seed(2026)
   dat <- generate_hep_data(
-    N = 10000, np_hazard = TRUE, dep_censor = TRUE,
-    complexity = TRUE, seed = 2026
+    N = 10000, h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
+    np_hazard = TRUE, dep_censor = TRUE, complexity = FALSE,
+    lambda_sw0 = 1e-3, gamma_A = 0.80, gamma_ckd = 0.60,
+    seed = 2026
   )
 
   message("  Event rate: ", round(mean(dat$event), 4))
@@ -97,9 +106,7 @@ if (!file.exists(lmtp_cache)) {
   # Treatment-policy: baseline-only treatment (time_varying_trt=FALSE)
   lmtp_prep <- prepare_lmtp_data(
     dat, tau = tau, bin_width = BIN_WIDTH,
-    time_varying_trt = FALSE,
-    baseline = c("age", "sex_male", "ckd", "diabetes",
-                 "hypertension", "heart_failure")
+    time_varying_trt = FALSE
   )
   message("  LMTP columns: ", lmtp_prep$n_bins, " time bins")
   message("  SL library: ", paste(SL_LIBRARY, collapse = ", "))
@@ -122,20 +129,21 @@ if (!file.exists(support_cache)) {
 
   set.seed(101)
   dat_good <- generate_hep_data(
-    N = 5000, np_hazard = TRUE, dep_censor = TRUE,
-    complexity = TRUE, seed = 101
+    N = 5000, h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
+    np_hazard = TRUE, dep_censor = TRUE, complexity = FALSE,
+    lambda_sw0 = 1e-3, gamma_A = 0.80, gamma_ckd = 0.60, seed = 101
   )
   set.seed(102)
   dat_strained <- generate_hep_data(
-    N = 5000, np_hazard = TRUE, dep_censor = TRUE,
-    complexity = TRUE,
-    gamma_A = 1.5, gamma_ckd = 1.2, lambda_sw0 = 5e-3, seed = 102
+    N = 5000, h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
+    np_hazard = TRUE, dep_censor = TRUE, complexity = FALSE,
+    lambda_sw0 = 3e-3, gamma_A = 1.2, gamma_ckd = 0.8, seed = 102
   )
   set.seed(103)
   dat_poor <- generate_hep_data(
-    N = 5000, np_hazard = TRUE, dep_censor = TRUE,
-    complexity = TRUE,
-    gamma_A = 2.5, gamma_ckd = 2.0, lambda_sw0 = 1e-2, seed = 103
+    N = 5000, h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
+    np_hazard = TRUE, dep_censor = TRUE, complexity = FALSE,
+    lambda_sw0 = 8e-3, gamma_A = 2.0, gamma_ckd = 1.5, seed = 103
   )
 
   scenarios <- list(dat_good, dat_strained, dat_poor)
@@ -188,10 +196,9 @@ if (!file.exists(support_cache)) {
 # 10 iters x 2 estimands x N=10000 with weekly bins
 sim_cache <- here("results", "sim_study_main.rds")
 if (!file.exists(sim_cache)) {
-  message("\n=== Running simulation study (20 iters x 5 estimands, N=10000) ===")
-  message("    (Increase n_iter for production; 20 is for debugging)")
+  message("\n=== Running simulation study (60 iters x 5 estimands, N=10000) ===")
   sim_results <- run_simulation_study(
-    n_iter      = 20,
+    n_iter      = 60,
     sample_size = 10000,
     tau         = tau,
     bin_width   = BIN_WIDTH,
@@ -199,9 +206,11 @@ if (!file.exists(sim_cache)) {
                     "composite", "principal_stratum"),
     run_lmtp    = TRUE,
     run_cox_td  = FALSE,
-    dgp_args    = list(np_hazard = TRUE, dep_censor = TRUE,
-                       return_potential_switching = TRUE,
-                       complexity = TRUE),
+    dgp_args    = list(h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
+                       np_hazard = TRUE, dep_censor = TRUE,
+                       complexity = FALSE,
+                       lambda_sw0 = 1e-3, gamma_A = 0.80, gamma_ckd = 0.60,
+                       return_potential_switching = TRUE),
     cache_file  = sim_cache
   )
   message("Saved simulation results to ", sim_cache)
