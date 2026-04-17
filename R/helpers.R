@@ -14,7 +14,6 @@
 #   principal_stratum:  time_varying_trt=FALSE, censor_at_switch=FALSE.
 #                       Baseline treatment on oracle never-switcher subset.
 
-# TODO(Joy): confirm exact file paths for the archived Cox and LMTP scripts used.
 
 suppressPackageStartupMessages({
   library(survival)
@@ -65,10 +64,19 @@ expand_person_period <- function(dat, tau = 180, covars = NULL) {
 #' Estimates a conditional hazard ratio, not a marginal risk contrast. Often
 #' interpreted as a treatment-policy analysis, but the Cox HR does not
 #' correspond to the marginal risk difference defined by that estimand.
+#'
+#' Intended estimand: treatment-policy (Cox version). Targets the conditional
+#' HR for baseline treatment assignment over a [0, tau] follow-up window that
+#' ignores any post-baseline switching.
+#'
 #' @param dat data.frame with follow_time, event, treatment, and baseline covariates.
 #' @param tau numeric; follow-up horizon.
 #' @param covars character vector of adjustment covariates.
-#' @return list with hr, ci, and survival curves.
+#' @return list with:
+#'   - `model`: fitted coxph object
+#'   - `hr`, `ci_low`, `ci_high`: HR point estimate and 95% HR CI
+#'     (from the Cox model; on the HR scale, not the RD scale)
+#'   - `survfit`: stratified survfit for KM risk extraction via km_risk_at()
 fit_cox_naive <- function(dat, tau = 180,
                           covars = c("age", "ckd", "cirrhosis", "diabetes",
                                      "heart_failure")) {
@@ -101,14 +109,25 @@ fit_cox_naive <- function(dat, tau = 180,
 
 # ── Cox: censor at switch ────────────────────────────────────────────────────
 #' Fit a Cox model that censors follow-up at the observed treatment switch time.
-#' Often used to approximate a hypothetical or while-on-treatment analysis.
-#' Estimates a conditional HR among non-censored person-time; biased when
-#' switching is informative (i.e., when the censoring assumption is violated).
+#' Often used to approximate a hypothetical no-switch or while-on-treatment
+#' analysis. Estimates a conditional HR among non-censored person-time; biased
+#' when switching is informative (i.e., when the censoring-at-random assumption
+#' is violated because CKD or other confounders drive both switching and the
+#' outcome).
+#'
+#' Intended estimand: WOT or no-switch (Cox version). Both targets are
+#' approximated by this model under the strong assumption of non-informative
+#' censoring; the resulting HR is a conditional within-model summary and
+#' does not target the marginal RD of any ICH E9(R1) estimand.
+#'
 #' @param dat data.frame; must contain follow_time, event, switch_time,
 #'   switched, treatment.
 #' @param tau numeric; follow-up horizon.
-#' @param covars character vector.
-#' @return list with hr, ci, survfit.
+#' @param covars character vector of adjustment covariates.
+#' @return list with:
+#'   - `model`: fitted coxph object
+#'   - `hr`, `ci_low`, `ci_high`: HR point estimate and 95% HR CI
+#'   - `survfit`: stratified survfit under the censor-at-switch follow-up
 fit_cox_censor_switch <- function(dat, tau = 180,
                                   covars = c("age", "ckd", "cirrhosis",
                                              "diabetes", "heart_failure")) {
@@ -157,13 +176,21 @@ fit_cox_censor_switch <- function(dat, tau = 180,
 
 # ── Cox: time-dependent treatment covariate ─────────────────────────────────
 #' Fit a Cox model with treatment as a time-dependent covariate that changes
-#' at the switch time. This is sometimes used to "adjust" for switching, but
-#' it does not target the treatment-policy estimand without strong assumptions
-#' (no unmeasured time-varying confounding of the switch decision).
+#' at the switch time. This is sometimes used to "adjust" for switching by
+#' attributing post-switch person-time to the switched treatment, but it does
+#' not target any ICH E9(R1) marginal estimand without strong assumptions
+#' (no unmeasured time-varying confounding of the switch decision, and a
+#' proportional-hazards assumption on the current-treatment indicator).
+#'
+#' Intended estimand: none of the ICH E9(R1) strategies map cleanly to this
+#' model. Reported for completeness as a commonly-used switching adjustment.
+#'
 #' @param dat data.frame from generate_hep_data() with switch_time and switched.
 #' @param tau numeric; follow-up horizon.
 #' @param covars character vector of baseline covariates.
-#' @return list with hr, ci.
+#' @return list with:
+#'   - `model`: fitted coxph object with (tstart, tstop) intervals
+#'   - `hr`, `ci_low`, `ci_high`: HR for the current-treatment indicator
 fit_cox_td <- function(dat, tau = 180,
                        covars = c("age", "ckd", "cirrhosis", "diabetes",
                                   "heart_failure")) {
@@ -228,19 +255,36 @@ fit_cox_td <- function(dat, tau = 180,
 
 # ── Cox: IPCW-weighted (censor at switch, adjust for informative censoring) ─
 #' Fit an IPCW-weighted Cox model that censors at switch but reweights
-#' to account for informative censoring from switching. This is the
-#' standard pharmacoepi approach for hypothetical/WOT estimands.
+#' non-switchers to account for informative censoring. A commonly-used
+#' pharmacoepi approach for WOT / hypothetical no-switch estimands.
 #'
-#' The switching model is a pooled logistic regression of switching on
-#' treatment, baseline covariates, and (optionally) time. Stabilised
-#' weights are used to reduce variance.
+#' The switching model is a subject-level logistic regression of
+#' `did_switch ~ treatment + weight_covars`. Stabilised IPCW weights are
+#' computed as `(1 - p_marginal) / (1 - p_conditional)` for non-switchers
+#' and truncated at the 99th percentile; switchers receive weight 1 since
+#' they are censored (their weight is irrelevant to the outcome model).
+#' If no subject switches, IPCW reduces to naive Cox and the function
+#' returns `fit_cox_naive()` on the input data.
+#'
+#' Simplification: this implementation uses a subject-level binary switching
+#' model rather than a time-varying pooled logistic model. A production
+#' IPCW analysis would specify the time-varying censoring process with
+#' hazard-based weights; see Limitations in the manuscript.
+#'
+#' Intended estimand: WOT / hypothetical no-switch (Cox version). Targets
+#' the conditional HR under follow-up censored at switch, reweighted to
+#' recover the marginal among covariate-matched non-switchers.
 #'
 #' @param dat data.frame from generate_hep_data() with switch_time, switched.
 #' @param tau numeric; follow-up horizon.
 #' @param covars character vector of baseline covariates for the outcome model.
 #' @param weight_covars character vector of covariates for the switching model.
-#'   Defaults to covars plus treatment.
-#' @return list with hr, ci_low, ci_high, survfit.
+#'   Defaults to covars (treatment is always added to the switching model).
+#' @return list with:
+#'   - `model`: fitted coxph object with robust SE
+#'   - `hr`, `ci_low`, `ci_high`: HR point estimate and 95% HR CI
+#'     (CI uses the robust sandwich variance to account for weighting)
+#'   - `survfit`: weighted stratified survfit under censor-at-switch follow-up
 fit_cox_ipcw <- function(dat, tau = 180,
                          covars = c("age", "ckd", "cirrhosis", "diabetes",
                                     "heart_failure"),
@@ -325,56 +369,48 @@ static_binary_off <- function(data, trt) {
   rep(0L, nrow(data))
 }
 
-#JOY :UPDATE (TREATMENT POLICY ESTIMAND)
-# In the current longitudinal setup, the static_binary_on vs off does not correspond to
-# the treatment policy estimand. We want the effect of starting TDF vs ETV regardless 
-# what happens at later time points. In that case we define a shifted dataset, where
-# we intervene to set A1=1 for all vs A1=0 ignoring the other timepoints
-
-
+#' Build a shifted dataset that intervenes on baseline treatment only.
+#' Used by the optional `add_baseline_only` branch of `run_lmtp_analysis()`
+#' (not invoked by the main simulation pipeline). Sets the first A column to
+#' a fixed value and leaves later A columns at their observed values, with
+#' all C columns set to 1 (required by `lmtp_sdr()` when `shifted=` is used
+#' in a survival setting).
+#'
+#' @param data data.frame (wide format, with A and C columns).
+#' @param baseline_trt character; name of the baseline treatment column
+#'   (e.g., "A1" or "treatment").
+#' @param value numeric 0/1; treatment value to assign at baseline.
+#' @param C_cols character vector of censoring column names (e.g., C1..CK).
+#' @return data.frame with baseline_trt set to `value` and C_cols set to 1.
 make_shifted_baseline <- function(data, baseline_trt, value, C_cols = NULL) {
   shifted <- data
-  
+
   # Intervene only on baseline treatment
   shifted[[baseline_trt]] <- value
-  
+
   # Required for lmtp when using shifted= in survival settings
   if (!is.null(C_cols)) {
     for (cc in C_cols) {
       shifted[[cc]] <- 1
     }
   }
-  
+
   shifted
 }
 
 
-# TODO(Joy): finalise the no_switch intervention function for the
-#   hypothetical estimand in the longitudinal (person-period) LMTP setup.
-#   The function below is a placeholder for the case where treatment is
-#   time-varying and the intervention sets post-baseline treatment to the
-#   baseline value (i.e., no switching allowed).
-
-#' No-switch intervention: set post-baseline treatment to baseline value.
-#' For use with a time-varying treatment column in LMTP, this ensures
-#' each subject remains on their initially assigned treatment throughout.
+#' No-switch intervention: preserve baseline treatment at every time point.
+#' Not currently called by the main simulation pipeline — the no-switch
+#' estimand is implemented via `static_binary_on/off` on time-varying A_j
+#' columns (which override all A_j to a constant, equivalent to holding
+#' baseline treatment). Retained for reference and possible future use.
+#'
 #' @param data data.frame with treatment column.
 #' @param trt character; name of the treatment variable at the current time.
 #' @return vector of treatment values equal to baseline treatment.
-
 intervention_no_switch <- function(data, trt) {
-  
-  
-  # In the current setup, treatment is time-fixed at baseline.
-  # This function preserves that value across all time points.
   data[["treatment"]]
- 
 }
-
-
-#JOY: Agreed with Andrew that intervention_no_switch estimand is the static_binary_on
-# vs static_binary_off and hence already implemented. 
-
 
 
 # ── LMTP data preparation ───────────────────────────────────────────────────
@@ -516,69 +552,45 @@ prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,
 
 
 # ── LMTP estimation wrapper ─────────────────────────────────────────────────
-#' Run lmtp_sdr for two interventions and return contrasts.
-#' @param lmtp_prep output of prepare_lmtp_data().
-#' @param shift_on function; intervention for "treated" arm.
-#'   Defaults to lmtp::static_binary_on.
-#' @param shift_off function; intervention for "control" arm.
-#'   Defaults to lmtp::static_binary_off.
-#' @param folds integer; number of cross-validation folds.
-#'   For production: V >= 10 when n_eff < 5000 (Gruber et al. 2022).
-#' @param learners character vector of SuperLearner libraries.
-#'   For production: c("SL.glm", "SL.glmnet", "SL.xgboost") at minimum.
-#'   Tutorial default is SL.glm only for speed.
-#' @return list with res_on, res_off, risk_trt, risk_ctrl, contrast_rr, contrast_rd.
-#' 
-#' 
-#JOY: UPDATE: I commented out the previous "run_lmtp_analysis" and wrote an updated 
-# one implementing the "treatment policy" and the "hypothetical no_switch" estimand".
-#  Need to implement the "while-on-treatment" and,composite and principal stratum 
-#estimands. 
-
-# run_lmtp_analysis <- function(lmtp_prep,
-#                               shift_on  = NULL,
-#                               shift_off = NULL,
-#                               folds = 2,
-#                               learners = c("SL.glm")) {
-#   requireNamespace("lmtp", quietly = TRUE)
-# 
-#   if (is.null(shift_on))  shift_on  <- lmtp::static_binary_on
-#   if (is.null(shift_off)) shift_off <- lmtp::static_binary_off
-# 
-#   # Use time-varying treatment columns if available (from prepare_lmtp_data_tv)
-#   trt_spec <- if (!is.null(lmtp_prep$A_cols)) lmtp_prep$A_cols else "treatment"
-# 
-#   common_args <- list(
-#     data    = lmtp_prep$data,
-#     trt     = trt_spec,
-#     outcome = lmtp_prep$Y_cols,
-#     cens    = lmtp_prep$C_cols,
-#     baseline = lmtp_prep$baseline,
-#     outcome_type = "survival",
-#     folds   = folds,
-#     learners_trt     = learners,
-#     learners_outcome = learners
-#   )
-# 
-#   res_on  <- do.call(lmtp::lmtp_sdr,
-#                      c(common_args, list(shift = shift_on)))
-#   res_off <- do.call(lmtp::lmtp_sdr,
-#                      c(common_args, list(shift = shift_off)))
-# 
-#   contrast_rr <- lmtp::lmtp_contrast(res_on, ref = res_off, type = "rr")
-#   contrast_rd <- lmtp::lmtp_contrast(res_on, ref = res_off, type = "additive")
-# 
-#   list(
-#     res_on      = res_on,
-#     res_off     = res_off,
-#     risk_trt    = 1 - res_on$theta[length(res_on$theta)],
-#     risk_ctrl   = 1 - res_off$theta[length(res_off$theta)],
-#     contrast_rr = contrast_rr,
-#     contrast_rd = contrast_rd
-#   )
-# }
-
-
+#' Run `lmtp_sdr()` for two static interventions and return both interventions'
+#' fits plus the risk-ratio and risk-difference contrasts.
+#'
+#' The intervention dispatch is driven by what `prepare_lmtp_data()` produced:
+#'   - If `lmtp_prep$A_cols` is non-NULL (time-varying A_j), `static_binary_on/off`
+#'     overrides every A_j to 1 or 0 — implementing the no-switch counterfactual
+#'     "hold treatment constant at every time point."
+#'   - If `lmtp_prep$A_cols` is NULL (baseline-only), `static_binary_on/off`
+#'     sets the single baseline treatment column to 1 or 0 — implementing the
+#'     treatment-policy / WOT / composite / principal-stratum targets.
+#'
+#' Return-value sign convention:
+#'   - `risk_trt`, `risk_ctrl` are on the risk scale: `1 - theta[K]`.
+#'   - `contrast_rd` returns the survival-scale contrast `S(1) - S(0)` directly
+#'     from `lmtp_contrast(type = "additive")`. Callers that want the
+#'     risk-scale RD `R(1) - R(0)` must negate the point estimate and swap the
+#'     CI bounds (done in `extract_lmtp()` in R/run_simulations.R).
+#'
+#' @param lmtp_prep output of `prepare_lmtp_data()`.
+#' @param shift_on function; intervention for the "treated" arm.
+#'   Defaults to `lmtp::static_binary_on`.
+#' @param shift_off function; intervention for the "control" arm.
+#'   Defaults to `lmtp::static_binary_off`.
+#' @param add_baseline_only logical; if TRUE and `lmtp_prep$A_cols` is non-NULL,
+#'   also runs a baseline-only intervention using `shifted=` (treats the first
+#'   A column as the intervention point and leaves later A columns at observed
+#'   values). Optional diagnostic; not used by the main simulation pipeline.
+#' @param folds integer; number of cross-validation folds. For production:
+#'   V >= 10 when n_eff < 5000 (Gruber et al. 2022). Simulation default is 2.
+#' @param learners character vector of SuperLearner libraries. For production:
+#'   `c("SL.glm", "SL.glmnet", "SL.xgboost")` at minimum. Tutorial default
+#'   is `c("SL.mean", "SL.glm", "SL.bayesglm")` for speed.
+#' @return list with:
+#'   - `res_on`, `res_off`: full `lmtp_sdr` fits for the two interventions
+#'   - `risk_trt`, `risk_ctrl`: marginal risks on the risk scale
+#'   - `contrast_rr`: `lmtp_contrast(type = "rr")` output
+#'   - `contrast_rd`: `lmtp_contrast(type = "additive")` output, on the
+#'     survival scale (negate to get the risk-scale RD)
+#'   - (if `add_baseline_only = TRUE`) additional `*_baseline_only` fields
 run_lmtp_analysis <- function(lmtp_prep,
                               shift_on  = NULL,
                               shift_off = NULL,
@@ -625,9 +637,11 @@ run_lmtp_analysis <- function(lmtp_prep,
     contrast_rd = contrast_rd
   )
   
- # Optional: baseline-only intervention (Joy's treatment-policy approach)
+ # Optional: baseline-only intervention on wide-format time-varying data.
  # Intervenes on A1 only, leaving A2..An at observed values.
- # Uses lmtp's shifted= argument rather than shift function.
+ # Uses lmtp's `shifted=` argument rather than a shift function.
+ # Not used by the main simulation pipeline, where the treatment-policy
+ # estimand is implemented via `time_varying_trt = FALSE` in prepare_lmtp_data().
   if (add_baseline_only && !is.null(lmtp_prep$A_cols)) {
     baseline_trt <- lmtp_prep$A_cols[1]
 

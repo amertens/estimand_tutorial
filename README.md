@@ -100,6 +100,159 @@ Each estimator reports a point estimate plus a 95% CI. We score performance on t
 
 Reporting both metrics exposes two failure modes: (1) the Cox HR reports a parameter on a scale that does not correspond to the estimand, and (2) even on its own HR scale, Cox fails to recover the correct marginal HR when confounding or informative switching is present.
 
+## Current implementation: all five estimands
+
+### Overview
+
+One dataset is generated under the treatment-policy regime (`generate_hep_data()` with `switch_on = TRUE`). Switching occurs and modifies the post-switch hazard, but does not censor follow-up. All raw timing variables (`event_time`, `switch_time`, `censor_admin`) are retained. Each estimand analysis derives its own outcome/censoring structure from this common dataset. The no-switch estimand additionally requires a separate DGP call with `switch_on = FALSE` for the Cox analyses; the no-switch LMTP uses the switching dataset and intervenes to prevent switching.
+
+LMTP analyses use baseline covariates `c("age", "sex_male", "ckd", "cirrhosis", "nsaid", "diabetes", "hypertension", "heart_failure")` by default (see `prepare_lmtp_data()`). Cox analyses use `c("age", "ckd", "cirrhosis", "diabetes", "heart_failure")`.
+
+---
+
+### 1. Treatment-policy
+
+**Scientific question:** What is the 180-day risk comparing populations initiated on active vs comparator, regardless of subsequent switching?
+
+**Target parameter:** ψ^TP = E[Y^(a=1)(180)] − E[Y^(a=0)(180)], where switching occurs naturally post-baseline.
+
+**Truth** (`calc_truth.R: truth_treatment_policy`):
+- Generate 500K all-treated and 500K all-control with `switch_on = TRUE`, `dep_censor = FALSE`
+- Switching occurs and modifies the post-switch hazard (switchers move to the other regimen's hazard, including the comparator's HR = 1.0)
+- `follow_time = min(event_time, censor_admin)` — switching does NOT censor
+- Compute `mean(event == 1 & follow_time <= 180)` in each arm
+
+**LMTP specification** (`run_simulations.R`):
+- Data: `dat_raw` (treatment-policy, switching present, not censored)
+- `time_varying_trt = FALSE` — single baseline `"treatment"` column
+- `censor_at_switch = FALSE` — C columns encode only administrative censoring
+- Shift: `static_binary_on` sets A = 1; `static_binary_off` sets A = 0
+- **Mechanism:** LMTP assigns treatment at baseline. Post-baseline switching is part of the natural course. The censoring model handles administrative censoring only; switching affects outcomes through the Y columns (events may occur after switching, under the post-switch hazard).
+
+**Cox analyses** (applied to `dat_raw`):
+- **Cox naive:** baseline treatment only, follow-up not censored at switch. This is the correct Cox model *for this estimand*, though its conditional HR does not correspond to the marginal RD.
+- **Cox censor-at-switch:** targets a different estimand (WOT/no-switch); reported for comparison.
+- **Cox IPCW:** censors at switch and reweights non-switchers by the inverse probability of remaining unswitched.
+
+---
+
+### 2. Hypothetical no-switch
+
+**Scientific question:** What would the 180-day risk be if no patient could switch?
+
+**Target parameter:** ψ^HYP = E[Y^(a=1, s̄=0)(180)] − E[Y^(a=0, s̄=0)(180)], where s̄ = 0 means switching is prevented at all times.
+
+**Truth** (`calc_truth.R: truth_no_switch`):
+- Generate 500K all-treated and 500K all-control with `switch_on = FALSE`
+- No switching occurs; event times are drawn under sustained assigned treatment only
+- `follow_time = min(event_time, censor_admin)` with `censor_admin = max_follow` (no dependent censoring)
+- Compute `mean(event == 1 & follow_time <= 180)` in each arm
+
+**LMTP specification** (`run_simulations.R`):
+- Data: `dat_raw` (the **switching** dataset with `switch_on = TRUE`). LMTP needs to observe the switching process in order to model it and then intervene to prevent it.
+- `time_varying_trt = TRUE` — creates A_1, A_2, …, A_13 columns (one per biweekly bin) that reflect the observed switching trajectory (A_j = baseline treatment before switch, 1 − baseline after)
+- `censor_at_switch = FALSE` — no additional censoring
+- Shift: `static_binary_on` sets ALL A_j = 1; `static_binary_off` sets ALL A_j = 0
+- **Mechanism:** The static binary intervention overrides the observed switching trajectory, forcing treatment to stay constant from baseline through the full 180 days — directly implementing the counterfactual "no switching." Identification requires sequential exchangeability (no unmeasured confounders of the switching decision at each time point).
+
+**Cox analyses** (applied to `dat_noswitch` generated with `switch_on = FALSE`):
+- Cox naive, censor-at-switch, and IPCW all produce identical results because there is no switching to distinguish them; IPCW falls back to naive Cox internally when `sum(did_switch) == 0`.
+
+---
+
+### 3. While-on-treatment (WOT)
+
+**Scientific question:** What is the 180-day risk under baseline treatment with follow-up truncated at the time of switching?
+
+**Target parameter:** 180-day cumulative incidence under baseline treatment assignment with switching treated as a censoring event.
+
+**Truth** (`calc_truth.R: truth_while_on_treatment`):
+- Generate 500K all-treated and 500K all-control with `switch_on = TRUE`, `dep_censor = FALSE`
+- Compute **direct Monte Carlo**: `mean(event_time <= pmin(switch_time, tau))` in each arm
+- Under counterfactual uniform treatment with no dependent admin censoring, this is the exact WOT risk — no KM machinery needed
+- **This is not the conditional risk among non-switchers.** It is the risk under follow-up that is truncated at switching, summed over the whole arm.
+
+**LMTP specification** (`run_simulations.R`):
+- Data: `dat_raw` (treatment-policy data, switching present)
+- `time_varying_trt = FALSE` — single baseline `"treatment"` column
+- `censor_at_switch = TRUE` — **this is the key difference from treatment-policy**
+  - Follow-up is redefined as `min(event_time, switch_time, follow_time, tau)`
+  - Events after switching are excluded from Y
+  - C columns encode BOTH administrative censoring AND switch-induced censoring
+- Shift: `static_binary_on/off` at baseline only
+- **Mechanism:** Treatment is assigned at baseline. Switching enters through the censoring nodes (C columns), not the treatment nodes. The LMTP censoring model adjusts for the informative component of switch-censoring (CKD drives both switching and the outcome). This is a proper censoring-based WOT analysis, not a treatment-node intervention to prevent switching.
+
+**Cox analyses** (applied to `dat_cox = derive_estimand(dat_raw, "while_on_treatment")`):
+- After `derive_estimand`, `follow_time` is already min(event, switch, admin), so Cox naive, censor-at-switch, and IPCW all produce identical results on this data. IPCW falls back to naive Cox because `switched` in the derived data is 0 for everyone (switching has been absorbed into the new follow_time).
+
+---
+
+### 4. Composite
+
+**Scientific question:** What is the 180-day risk of renal failure OR treatment switching (whichever comes first)?
+
+**Target parameter:** ψ^COMP = E[Y_comp^(a=1)(180)] − E[Y_comp^(a=0)(180)], where Y_comp^a(t) = I(min(T_event^a, T_switch^a) ≤ t).
+
+**Truth** (`calc_truth.R: truth_composite`):
+- Generate 500K all-treated and 500K all-control with `switch_on = TRUE`, `dep_censor = FALSE`
+- Apply `derive_estimand("composite")`: `follow_time = min(event_time, switch_time, censor_admin)`, `event = I(min(event_time, switch_time) <= censor_admin)`
+- Compute `mean(event == 1 & follow_time <= 180)` in each arm
+
+**LMTP specification** (`run_simulations.R`):
+- Data: `dat_cox = derive_estimand(dat_raw, "composite")` — Y columns encode the composite outcome
+- `time_varying_trt = FALSE` — single baseline `"treatment"` column
+- `censor_at_switch = FALSE` — switching is in the Y columns (outcome), not the C columns
+- Shift: `static_binary_on/off` at baseline
+- **Mechanism:** Switching is part of the outcome, not a treatment change or a censoring event. The LMTP censoring model adjusts only for administrative censoring. No time-varying treatment is needed.
+
+**Cox analyses** (applied to `dat_cox` from `derive_estimand("composite")`):
+- All three Cox approaches produce identical results because switching has been absorbed into the composite event indicator. IPCW falls back to naive internally.
+
+---
+
+### 5. Principal stratum
+
+**Scientific question:** What is the 180-day risk among patients who would not switch under either treatment assignment?
+
+**Target parameter:** ψ^PS = E[Y^(a=1)(180) | S^(a=1) > 180, S^(a=0) > 180] − E[Y^(a=0)(180) | S^(a=1) > 180, S^(a=0) > 180].
+
+**Truth** (`calc_truth.R: truth_principal_stratum`):
+- Generate 500K all-treated and 500K all-control with `return_potential_switching = TRUE` and the **same seed** for baseline covariates
+- The DGP draws potential switching times under both treatments using paired random number streams (save/restore `.Random.seed`)
+- `never_switcher = I(switch_time_a1 > max_follow AND switch_time_a0 > max_follow)`
+- Restrict to subjects where BOTH `df_a1$never_switcher == 1` AND `df_a0$never_switcher == 1`
+- Compute `mean(event_time[never_sw] <= 180)` in each arm
+
+**LMTP specification — oracle (primary)** (`run_simulations.R`):
+- Data: `dat_raw[dat_raw$never_switcher == 1, ]` — restricted to true never-switchers
+- `time_varying_trt = FALSE`, `censor_at_switch = FALSE`
+- Shift: `static_binary_on/off` at baseline
+- Label: `"LMTP SDR (oracle PS)"`
+- **Mechanism:** Since never-switchers by definition do not switch under either treatment, their treatment is constant throughout. Baseline-only treatment is appropriate. This is an oracle analysis using simulation-only information (the `never_switcher` indicator requires knowing both potential switching outcomes).
+
+**LMTP specification — observed non-switcher approximation (supplementary):**
+- Data: `dat_raw[dat_raw$switched == 0, ]` — restricted to subjects who did not switch under their observed treatment
+- Same LMTP specification as oracle
+- Label: `"LMTP SDR (obs. non-sw, approx)"`
+- **Limitation:** Observed non-switchers are NOT the same as the principal stratum. A subject who did not switch on active might have switched on comparator (and vice versa). This proxy systematically selects lower-risk patients and does not recover the oracle truth.
+
+**Cox analyses** (applied to full `dat_raw`, same as treatment-policy):
+- Cox naive, censor-at-switch, and IPCW all run on the full dataset (not restricted to the stratum). Compared against the PS truth. Note that Cox naive achieves high coverage here not because it targets the principal stratum but because, under moderate switching selection (`gamma_A` = 0.80), the never-switcher subpopulation is compositionally similar to the overall cohort.
+
+---
+
+### Summary table
+
+| Estimand | LMTP data | `time_varying_trt` | `censor_at_switch` | LMTP shift | Switching handled via |
+|---|---|---|---|---|---|
+| Treatment-policy | `dat_raw` (switching) | FALSE | FALSE | Baseline on/off | Natural course (in Y) |
+| No-switch | `dat_raw` (switching) | **TRUE** | FALSE | Hold all A_j constant | Treatment intervention (prevented) |
+| While-on-treatment | `dat_raw` (switching) | FALSE | **TRUE** | Baseline on/off | Censoring event (in C) |
+| Composite | `dat_cox` (composite-derived) | FALSE | FALSE | Baseline on/off | Part of outcome (in Y) |
+| Principal stratum | `dat_raw` subset (oracle) | FALSE | FALSE | Baseline on/off | Restricted to never-switchers |
+
+---
+
 ## Key findings (60-iteration production run)
 
 | Estimand | LMTP RD bias | LMTP RD cov. | Cox RD cov. (best) | Cox HR cov. (best) |
