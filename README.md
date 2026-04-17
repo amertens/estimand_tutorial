@@ -5,9 +5,8 @@ Simulation study and manuscript comparing Cox-based analyses (naive, censor-at-s
 ## Repository layout
 
 ### Top-level documents
-- [`draft-estimands-results-outline.qmd`](draft-estimands-results-outline.qmd) — main manuscript (Quarto → Word). Renders from cached simulation results.
+- [`draft-estimands-manuscript.qmd`](draft-estimands-manuscript.qmd) — main manuscript (Quarto → Word). Renders from cached simulation results.
 - [`presentation-estimands.qmd`](presentation-estimands.qmd) — RevealJS slide deck. Reads the same caches as the manuscript.
-- [`tutorial-overview.qmd`](tutorial-overview.qmd) — plain-language companion document.
 - [`references.bib`](references.bib) / [`vancouver-superscript.csl`](vancouver-superscript.csl) — citation database and style.
 
 ### Core simulation code
@@ -65,7 +64,7 @@ Prints bias, RD coverage (bootstrap for Cox, EIF for LMTP), and HR coverage (Cox
 
 ### 5. Render manuscript and presentation
 ```bash
-quarto render draft-estimands-results-outline.qmd    # → .docx
+quarto render draft-estimands-manuscript.qmd         # → .docx
 quarto render presentation-estimands.qmd             # → .html (RevealJS)
 ```
 Both documents load from the cached `.rds` files and will fail cleanly with a `stopifnot` message if a cache is missing.
