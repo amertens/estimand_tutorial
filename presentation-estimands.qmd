@@ -515,10 +515,11 @@ Do not compare the Cox HR and LMTP RD as though they estimate the same quantity.
 #| fig-height: 5
 
 # Prefer production cache; fall back to test cache if production not yet complete
-sim_cache <- if (file.exists(here("results", "sim_study_main.rds")))
-               here("results", "sim_study_main.rds")
-             else
-               here("results", "sim_study_test.rds")
+sim_cache <- if (file.exists(here("results", "sim_study_main.rds"))) {
+  here("results", "sim_study_main.rds")
+} else {
+  here("results", "sim_study_test.rds")
+}
 has_sim <- file.exists(sim_cache)
 
 if (has_sim && has_truth) {
@@ -546,7 +547,7 @@ if (has_sim && has_truth) {
     geom_vline(data = truth_lines,
                aes(xintercept = xint), linetype = "dashed", color = "red",
                linewidth = 1) +
-    scale_fill_manual(values = pal[1:4]) +
+    scale_fill_manual(values = pal[seq_len(length(unique(sim_plot$method)))]) +
     labs(x = "Risk difference", y = "Count", fill = "Estimator",
          title = sprintf("Distribution of RD estimates across %d iterations (N = 10,000)",
                          length(unique(sim_plot$iter))),
@@ -565,6 +566,75 @@ if (has_sim && has_truth) {
 
 ::: {.notes}
 This slide loads from cached simulation results (60-iteration production cache). The simulation compares four estimators: Cox naive, Cox censor-at-switch, Cox IPCW, and LMTP SDR. Production findings: LMTP achieves 98% RD coverage on treatment-policy, 95% on composite, 95% on principal stratum oracle, 86% on no-switch, and 48% on while-on-treatment. Cox methods achieve 8–52% RD coverage across estimands and 0–10% HR coverage across most estimands—their HR CIs confidently report the wrong marginal quantity. DGP: HR_early=2.0, HR_late=0.90, ~11% switching, ~16% event rate, ~19% never-switchers.
+:::
+
+
+## Headline findings: coverage by estimator and estimand {.smaller}
+
+Across 60 iterations (N = 10,000 each), the production simulation yielded:
+
+| Estimand | LMTP RD cov. | Cox RD cov. (best) | Cox HR cov. (best) |
+|---|---|---|---|
+| Treatment-policy | **98%** | 48% (naive) | 10% (naive) |
+| No-switch | **86%** | 52% | 8% |
+| While-on-treatment | 48% | 8% | 7% |
+| Composite | **95%** | 78% (IPCW) | 38% |
+| Principal stratum (oracle) | **95%** | 97% (naive, see below) | 60% (naive) |
+
+. . .
+
+Two findings deserve emphasis:
+
+- **Cox HR confidence intervals confidently exclude the true marginal HR.** For treatment-policy, HR coverage was 10% (naive) and 0% (censor-at-switch, IPCW). These are narrow intervals that miss the truth.
+- **Cox naive on principal stratum is not a coincidence.** Under the mild switching selection in this DGP, the never-switcher subpopulation is structurally similar to the overall cohort. Under stronger selection, Cox naive would overestimate the PS risk difference just as it does for the other estimands.
+
+::: {.notes}
+The HR coverage finding is the most striking quantitative result. Emphasize that "0% coverage" is not a wide-CI-miss but a confident wrong answer. The PS-via-Cox finding is a teaching point: don't interpret Cox's good PS performance as a general property of the estimator.
+:::
+
+
+## Extension to other intercurrent events {.smaller}
+
+::: {style="font-size: 0.75em;"}
+
+The estimand framework applies to any post-baseline event, not just treatment switching.
+
+:::: {.columns}
+::: {.column width="50%"}
+**Informative loss to follow-up**
+
+- Treatment-policy: follow regardless of disenrollment
+- Hypothetical: model a world without dropout
+- WOT: censor at disenrollment (needs censoring model)
+
+*LMTP C columns handle this structurally identical to switch-censoring.*
+:::
+
+::: {.column width="50%"}
+**Informative monitoring**
+
+- More-monitored patients have more chances for events to be detected
+- LMTP models monitoring as a time-varying covariate jointly with outcome
+
+**Competing risks**
+
+- Death from unrelated causes precludes the safety outcome
+- Specify strategy: censor, composite, or cause-specific (e.g., `concrete` R package for continuous-time TMLE)
+:::
+::::
+
+. . .
+
+**The same three lessons apply:**
+
+1. The Cox HR does not generally correspond to the marginal risk contrast defined by the estimand.
+2. Conventional Cox-based adjustments (censor, reweight) can amplify bias when the adjustment model is misspecified.
+3. Estimand-aligned approaches (LMTP, TMLE) target the marginal quantity directly but depend on positivity and model specification.
+
+:::
+
+::: {.notes}
+The goal of this slide is to generalize beyond the hepatitis B switching scenario. The pattern of findings — wrong scale, wrong adjustment, LMTP as a structural fix — applies to other intercurrent events with the same logic.
 :::
 
 
@@ -683,13 +753,13 @@ The support diagnostic is as important as the estimator choice. A well-aligned e
 :::: {.columns}
 ::: {.column width="60%"}
 
-**Different estimands answer different questions.** The treatment effect has no single value without specifying how intercurrent events are handled.
+**Different estimands answer different questions.** Under the simulation DGP, the same data yielded true risk differences from +6.4% (WOT) to +18.3% (composite), a range that depends entirely on how switching is handled.
 
-**Cox hazard ratios are conditional parameters.** They do not generally correspond to the marginal risk contrasts defined by ICH E9(R1) estimands. Under non-proportional hazards and informative censoring, their interpretation is further complicated.
+**Cox hazard ratios do not target the estimand.** Across most estimand × estimator combinations, the Cox HR confidence interval contained the true marginal HR less than 40% of the time — and in the headline treatment-policy case, fewer than 10%.
 
-**Estimand-aligned estimators exist.** LMTP, TMLE, and related doubly robust methods target marginal risk contrasts directly, but their performance depends on data support and model specification.
+**LMTP targets the marginal risk difference directly.** Near-nominal coverage (95–98%) for four of five estimands, with the while-on-treatment estimand the remaining weak spot (48%) due to censoring-model specification.
 
-**Diagnostics are not optional.** Identification does not guarantee estimation. Positivity and support should be assessed before interpreting any causal estimate.
+**Diagnostics are not optional.** Identification does not guarantee estimation. Positivity and support should be assessed before interpreting any causal estimate, and the estimand hierarchy (TP most robust → NS most demanding) should inform estimand selection.
 :::
 
 ::: {.column width="40%"}

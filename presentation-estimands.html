@@ -10,7 +10,7 @@
   <meta name="generator" content="quarto-1.6.42">
 
   <meta name="author" content="Joy Nakato">
-  <meta name="dcterms.date" content="2026-04-13">
+  <meta name="dcterms.date" content="2026-04-16">
   <title>Estimand–Estimator Alignment in Post-Authorization Safety Analyses</title>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -122,10 +122,6 @@
       margin-right: 0; 
     }
   </style>
-  <script src="presentation-estimands_files/libs/kePrint-0.0.1/kePrint.js"></script>
-
-  <link href="presentation-estimands_files/libs/lightable-0.0.1/lightable.css" rel="stylesheet">
-
 </head>
 <body class="quarto-light">
   <div class="reveal">
@@ -146,7 +142,7 @@ Joy Nakato
     </div>
 </div>
 
-  <p class="date">2026-04-13</p>
+  <p class="date">2026-04-16</p>
 </section>
 <section id="the-problem" class="slide level2 smaller">
 <h2>The problem</h2>
@@ -206,7 +202,7 @@ Joy Nakato
 </ul>
 </div></div>
 <aside class="notes">
-<p>This is a simulated example calibrated to the published nephrotoxicity literature. The DGP uses HR=1.30 in the first 90 days, HR=0.90 after, with informative switching.</p>
+<p>This is a simulated example calibrated to the published nephrotoxicity literature. The DGP uses HR=2.0 in the first 90 days, HR=0.90 after, with informative switching (~11% by 180 days).</p>
 <style type="text/css">
         span.MJX_Assistive_MathML {
           position:absolute!important;
@@ -265,59 +261,18 @@ Figure&nbsp;2
 </section>
 <section id="five-estimands-one-dataset" class="slide level2 smaller">
 <h2>Five estimands, one dataset</h2>
-<p>The ICH E9(R1) addendum defines five strategies for handling intercurrent events. Each defines a different causal quantity — even from the same data.</p>
-<div id="tbl-estimands" class="cell">
-<div class="cell-output-display">
-<table class="table caption-top" data-quarto-postprocess="true" style="font-size: 13px; margin-left: auto; margin-right: auto;">
-<thead>
-<tr class="header">
-<th style="text-align: left;" data-quarto-table-cell-role="th">Strategy</th>
-<th style="text-align: left;" data-quarto-table-cell-role="th">Switching handled by</th>
-<th style="text-align: left;" data-quarto-table-cell-role="th">Target population</th>
-<th style="text-align: left;" data-quarto-table-cell-role="th">Interpretation</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td style="text-align: left;">Treatment-policy</td>
-<td style="text-align: left;">Included in follow-up</td>
-<td style="text-align: left;">All initiators</td>
-<td style="text-align: left;">Real-world effect of initiating treatment, including downstream switching</td>
-</tr>
-<tr class="even">
-<td style="text-align: left;">Hypothetical no-switch</td>
-<td style="text-align: left;">Modeled / intervened away</td>
-<td style="text-align: left;">All initiators (counterfactual)</td>
-<td style="text-align: left;">Effect if no patient could switch — isolates direct pharmacological effect</td>
-</tr>
-<tr class="odd">
-<td style="text-align: left;">While-on-treatment</td>
-<td style="text-align: left;">Censored at switch</td>
-<td style="text-align: left;">Patients remaining on treatment</td>
-<td style="text-align: left;">Effect during the period patients tolerate therapy</td>
-</tr>
-<tr class="even">
-<td style="text-align: left;">Composite</td>
-<td style="text-align: left;">Absorbed into outcome</td>
-<td style="text-align: left;">All initiators</td>
-<td style="text-align: left;">Risk of renal failure OR switching — conflates tolerability with safety</td>
-</tr>
-<tr class="odd">
-<td style="text-align: left;">Principal stratum</td>
-<td style="text-align: left;">Restricted to never-switchers</td>
-<td style="text-align: left;">Latent subpopulation</td>
-<td style="text-align: left;">Effect among patients who would not switch under either treatment</td>
-</tr>
-</tbody>
-</table>
-
-
-</div>
+<p>The ICH E9(R1) addendum defines five strategies for handling the same intercurrent event. Each defines a different causal quantity — even from the same data.</p>
+<div>
+<p><strong>1. Treatment-policy</strong> | Follow all patients regardless of switching | <em>Real-world effect of initiating treatment, including downstream switching</em></p>
+<p><strong>2. Hypothetical no-switch</strong> | Model / intervene to prevent switching | <em>Effect if no patient could switch — isolates the direct pharmacological effect</em></p>
+<p><strong>3. While-on-treatment</strong> | Switching treated as censoring event | <em>180-day risk with follow-up censored at switch; LMTP censoring model adjusts for informative switching</em></p>
+<p><strong>4. Composite</strong> | Absorb switching into the outcome | <em>Risk of renal failure OR switching — conflates tolerability with safety</em></p>
+<p><strong>5. Principal stratum</strong> | Restrict to latent never-switchers | <em>Effect among patients who would not switch under either treatment; oracle analysis in simulation</em></p>
 </div>
 <div class="fragment">
 <p>Each answers a <strong>different clinical question</strong>. Choosing among them is a scientific decision, not a statistical one.</p>
 <aside class="notes">
-<p>All five are implemented in the simulation. The primary comparison focuses on treatment-policy and no-switch. Composite and principal stratum are included for completeness but the current LMTP implementation does not provide well-matched estimators for them.</p>
+<p>All five are implemented in the simulation with distinct LMTP specifications: baseline-only treatment (treatment-policy, composite, principal stratum), time-varying hold-constant (no-switch), and censoring-based (while-on-treatment). Principal stratum uses an oracle never-switcher indicator in simulation.</p>
 <style type="text/css">
         span.MJX_Assistive_MathML {
           position:absolute!important;
@@ -338,7 +293,7 @@ Figure&nbsp;2
 <img data-src="presentation-estimands_files/figure-revealjs/fig-truth-1.png" id="fig-truth" width="1800" class="r-stretch quarto-figure-center"><p class="caption">
 Figure&nbsp;3
 </p><aside class="notes">
-<p>The composite RD is ~0.17 — dominated by differential switching rates, not renal failure. The TP and NS are nearly identical here because the post-switch hazard change is modest. The while-on-treatment and principal stratum condition on non-switching, selecting a subpopulation. This is the core teaching point: the treatment effect has no single value without specifying the estimand.</p>
+<p>The composite RD is large — dominated by differential switching rates, not renal failure. TP (+7.1%) and NS (+9.1%) differ by 2 percentage points because ~11% of patients switch, partially mitigating early harm. WOT truth (+6.4%) is the 180-day risk under follow-up truncated at switching. Principal stratum (+9.0%) restricts to oracle never-switchers (~19% of population). The core teaching point: the treatment effect has no single value without specifying the estimand.</p>
 <style type="text/css">
         span.MJX_Assistive_MathML {
           position:absolute!important;
@@ -479,7 +434,7 @@ Figure&nbsp;4
 <img data-src="presentation-estimands_files/figure-revealjs/fig-simdesign-1.png" id="fig-simdesign" width="2000" class="r-stretch quarto-figure-center"><p class="caption">
 Figure&nbsp;5
 </p><aside class="notes">
-<p>The DGP is calibrated to the published hepatitis B nephrotoxicity literature. Treatment assignment is confounded by CKD, cirrhosis, and age. Switching is driven by treatment and CKD, making it informative. The non-proportional hazard structure means any single HR is a time-averaged summary.</p>
+<p>The DGP uses HR=2.0 (early) and HR=0.90 (late) with ~16% event rate and ~11% switching. Treatment assignment is confounded by CKD, cirrhosis, and age. Switching is driven by treatment and CKD, making it informative. The non-proportional hazard structure means any single HR is a time-averaged summary.</p>
 <style type="text/css">
         span.MJX_Assistive_MathML {
           position:absolute!important;
@@ -491,6 +446,50 @@ Figure&nbsp;5
           overflow: hidden!important;
           display:block!important;
       }</style></aside>
+</section>
+<section id="performance-metrics" class="slide level2 smaller">
+<h2>Performance metrics</h2>
+<p>Each simulated dataset is analysed with four estimators. We summarise performance on two scales:</p>
+<div class="columns">
+<div class="column" style="width:50%;">
+<p><strong>Estimand scale (risk difference)</strong></p>
+<ul>
+<li>True RD is known by Monte Carlo (N = 500,000 per arm)</li>
+<li><strong>Bias</strong> = mean estimate − truth</li>
+<li><strong>RD coverage</strong> = proportion of 95% CIs containing truth
+<ul>
+<li>LMTP: analytic via efficient influence function</li>
+<li>Cox: bootstrap (200 replicates) on KM risk difference</li>
+</ul></li>
+</ul>
+</div><div class="column" style="width:50%;">
+<p><strong>Estimator scale (hazard ratio)</strong></p>
+<ul>
+<li>True marginal HR from a Cox regression on counterfactual potential outcomes</li>
+<li><strong>HR coverage</strong> = proportion of Cox HR CIs containing the true marginal HR</li>
+<li>LMTP does not target an HR; not evaluated on this scale</li>
+</ul>
+</div></div>
+<div class="fragment">
+<p>Reporting both exposes distinct failure modes:</p>
+<ul>
+<li><strong>Wrong scale:</strong> the Cox HR reports on a scale that does not correspond to the estimand</li>
+<li><strong>Wrong adjustment:</strong> even on its own HR scale, Cox fails to recover the correct marginal HR when confounding or informative switching is present</li>
+</ul>
+<aside class="notes">
+<p>Bias on the HR scale is sensitive to the non-collapsibility of the HR; we focus on coverage. The true marginal HR is computed via compute_true_hr in calc_truth.R, which fits coxph(Surv ~ trt) on the combined counterfactual all-treated and all-control datasets.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</div>
 </section>
 <section id="single-dataset-results" class="slide level2 smaller">
 <h2>Single-dataset results</h2>
@@ -516,23 +515,23 @@ Table&nbsp;1: Estimates from a single simulated dataset (N = 10,000)
 <tr class="odd">
 <td style="text-align: left;">Cox (baseline trt)</td>
 <td style="text-align: left;">HR</td>
-<td style="text-align: right;">1.4040</td>
-<td style="text-align: right;">0.1014</td>
-<td style="text-align: right;">0.03</td>
+<td style="text-align: right;">1.5600</td>
+<td style="text-align: right;">0.0869</td>
+<td style="text-align: right;">0.0711</td>
 </tr>
 <tr class="even">
 <td style="text-align: left;">Cox (censor at switch)</td>
 <td style="text-align: left;">HR</td>
-<td style="text-align: right;">1.4370</td>
-<td style="text-align: right;">0.0993</td>
-<td style="text-align: right;">0.03</td>
+<td style="text-align: right;">1.7280</td>
+<td style="text-align: right;">0.1115</td>
+<td style="text-align: right;">0.0711</td>
 </tr>
 <tr class="odd">
 <td style="text-align: left;">LMTP SDR</td>
 <td style="text-align: left;">RD</td>
-<td style="text-align: right;">0.0041</td>
-<td style="text-align: right;">0.0041</td>
-<td style="text-align: right;">0.03</td>
+<td style="text-align: right;">0.0683</td>
+<td style="text-align: right;">0.0683</td>
+<td style="text-align: right;">0.0711</td>
 </tr>
 </tbody>
 </table>
@@ -564,7 +563,126 @@ Table&nbsp;1: Estimates from a single simulated dataset (N = 10,000)
 <img data-src="presentation-estimands_files/figure-revealjs/fig-sim-results-1.png" id="fig-sim-results" width="2000" class="r-stretch quarto-figure-center"><p class="caption">
 Figure&nbsp;6
 </p><aside class="notes">
-<p>This slide loads from cached simulation results. If the cache does not exist, a placeholder is shown. The simulation compares Cox naive, Cox censor-at-switch, and LMTP SDR across 20 iterations for the treatment-policy and no-switch estimands.</p>
+<p>This slide loads from cached simulation results (60-iteration production cache). The simulation compares four estimators: Cox naive, Cox censor-at-switch, Cox IPCW, and LMTP SDR. Production findings: LMTP achieves 98% RD coverage on treatment-policy, 95% on composite, 95% on principal stratum oracle, 86% on no-switch, and 48% on while-on-treatment. Cox methods achieve 8–52% RD coverage across estimands and 0–10% HR coverage across most estimands—their HR CIs confidently report the wrong marginal quantity. DGP: HR_early=2.0, HR_late=0.90, ~11% switching, ~16% event rate, ~19% never-switchers.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</section>
+<section id="headline-findings-coverage-by-estimator-and-estimand" class="slide level2 smaller">
+<h2>Headline findings: coverage by estimator and estimand</h2>
+<p>Across 60 iterations (N = 10,000 each), the production simulation yielded:</p>
+<table class="caption-top">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Estimand</th>
+<th>LMTP RD cov.</th>
+<th>Cox RD cov. (best)</th>
+<th>Cox HR cov. (best)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Treatment-policy</td>
+<td><strong>98%</strong></td>
+<td>48% (naive)</td>
+<td>10% (naive)</td>
+</tr>
+<tr class="even">
+<td>No-switch</td>
+<td><strong>86%</strong></td>
+<td>52%</td>
+<td>8%</td>
+</tr>
+<tr class="odd">
+<td>While-on-treatment</td>
+<td>48%</td>
+<td>8%</td>
+<td>7%</td>
+</tr>
+<tr class="even">
+<td>Composite</td>
+<td><strong>95%</strong></td>
+<td>78% (IPCW)</td>
+<td>38%</td>
+</tr>
+<tr class="odd">
+<td>Principal stratum (oracle)</td>
+<td><strong>95%</strong></td>
+<td>97% (naive, see below)</td>
+<td>60% (naive)</td>
+</tr>
+</tbody>
+</table>
+<div class="fragment">
+<p>Two findings deserve emphasis:</p>
+<ul>
+<li><strong>Cox HR confidence intervals confidently exclude the true marginal HR.</strong> For treatment-policy, HR coverage was 10% (naive) and 0% (censor-at-switch, IPCW). These are narrow intervals that miss the truth.</li>
+<li><strong>Cox naive on principal stratum is not a coincidence.</strong> Under the mild switching selection in this DGP, the never-switcher subpopulation is structurally similar to the overall cohort. Under stronger selection, Cox naive would overestimate the PS risk difference just as it does for the other estimands.</li>
+</ul>
+<aside class="notes">
+<p>The HR coverage finding is the most striking quantitative result. Emphasize that “0% coverage” is not a wide-CI-miss but a confident wrong answer. The PS-via-Cox finding is a teaching point: don’t interpret Cox’s good PS performance as a general property of the estimator.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</div>
+</section>
+<section id="extension-to-other-intercurrent-events" class="slide level2 smaller">
+<h2>Extension to other intercurrent events</h2>
+<div style="font-size: 0.75em;">
+<p>The estimand framework applies to any post-baseline event, not just treatment switching.</p>
+<div class="columns">
+<div class="column" style="width:50%;">
+<p><strong>Informative loss to follow-up</strong></p>
+<ul>
+<li>Treatment-policy: follow regardless of disenrollment</li>
+<li>Hypothetical: model a world without dropout</li>
+<li>WOT: censor at disenrollment (needs censoring model)</li>
+</ul>
+<p><em>LMTP C columns handle this structurally identical to switch-censoring.</em></p>
+</div><div class="column" style="width:50%;">
+<p><strong>Informative monitoring</strong></p>
+<ul>
+<li>More-monitored patients have more chances for events to be detected</li>
+<li>LMTP models monitoring as a time-varying covariate jointly with outcome</li>
+</ul>
+<p><strong>Competing risks</strong></p>
+<ul>
+<li>Death from unrelated causes precludes the safety outcome</li>
+<li>Specify strategy: censor, composite, or cause-specific (e.g., <code>concrete</code> R package for continuous-time TMLE)</li>
+</ul>
+</div></div>
+<p>. . .</p>
+<p><strong>The same three lessons apply:</strong></p>
+<ol type="1">
+<li>The Cox HR does not generally correspond to the marginal risk contrast defined by the estimand.</li>
+<li>Conventional Cox-based adjustments (censor, reweight) can amplify bias when the adjustment model is misspecified.</li>
+<li>Estimand-aligned approaches (LMTP, TMLE) target the marginal quantity directly but depend on positivity and model specification.</li>
+</ol>
+</div>
+<aside class="notes">
+<p>The goal of this slide is to generalize beyond the hepatitis B switching scenario. The pattern of findings — wrong scale, wrong adjustment, LMTP as a structural fix — applies to other intercurrent events with the same logic.</p>
 <style type="text/css">
         span.MJX_Assistive_MathML {
           position:absolute!important;
@@ -692,10 +810,10 @@ Table&nbsp;2: Estimation results across support scenarios (N = 5,000)
 <h2>Conclusions</h2>
 <div class="columns">
 <div class="column" style="width:60%;">
-<p><strong>Different estimands answer different questions.</strong> The treatment effect has no single value without specifying how intercurrent events are handled.</p>
-<p><strong>Cox hazard ratios are conditional parameters.</strong> They do not generally correspond to the marginal risk contrasts defined by ICH E9(R1) estimands. Under non-proportional hazards and informative censoring, their interpretation is further complicated.</p>
-<p><strong>Estimand-aligned estimators exist.</strong> LMTP, TMLE, and related doubly robust methods target marginal risk contrasts directly, but their performance depends on data support and model specification.</p>
-<p><strong>Diagnostics are not optional.</strong> Identification does not guarantee estimation. Positivity and support should be assessed before interpreting any causal estimate.</p>
+<p><strong>Different estimands answer different questions.</strong> Under the simulation DGP, the same data yielded true risk differences from +6.4% (WOT) to +18.3% (composite), a range that depends entirely on how switching is handled.</p>
+<p><strong>Cox hazard ratios do not target the estimand.</strong> Across most estimand × estimator combinations, the Cox HR confidence interval contained the true marginal HR less than 40% of the time — and in the headline treatment-policy case, fewer than 10%.</p>
+<p><strong>LMTP targets the marginal risk difference directly.</strong> Near-nominal coverage (95–98%) for four of five estimands, with the while-on-treatment estimand the remaining weak spot (48%) due to censoring-model specification.</p>
+<p><strong>Diagnostics are not optional.</strong> Identification does not guarantee estimation. Positivity and support should be assessed before interpreting any causal estimate, and the estimand hierarchy (TP most robust → NS most demanding) should inform estimand selection.</p>
 </div><div class="column" style="width:40%;">
 <p><strong>The causal roadmap:</strong></p>
 <div class="cell">
@@ -748,12 +866,12 @@ Figure&nbsp;8
 <tbody>
 <tr class="odd">
 <td><code>h0</code></td>
-<td>5 <span class="math inline">\(\times\)</span> 10<span class="math inline">\(^{-4}\)</span></td>
+<td>5 <span class="math inline">\(\times\)</span> 10<span class="math inline">\(^{-3}\)</span></td>
 <td>Baseline hazard</td>
 </tr>
 <tr class="even">
 <td><code>HR_early</code></td>
-<td>1.30</td>
+<td>2.0</td>
 <td>TDF vs ETV, first 90 days</td>
 </tr>
 <tr class="odd">
@@ -814,19 +932,31 @@ Figure&nbsp;8
 <td>Treatment-policy</td>
 <td>Conditional HR (not marginal RD)</td>
 <td>Wrong estimand (censors at switch)</td>
-<td>Marginal RD under static intervention</td>
+<td>Baseline trt; marginal RD under static intervention</td>
 </tr>
 <tr class="even">
 <td>No-switch</td>
 <td>Includes post-switch outcomes</td>
 <td>Assumes non-informative censoring</td>
-<td>Marginal RD under no-switch intervention</td>
+<td>Time-varying trt; holds constant = no-switch</td>
 </tr>
 <tr class="odd">
 <td>While-on-treatment</td>
 <td>Includes post-switch person-time</td>
 <td>Biased if switching informative</td>
-<td>Marginal RD via censoring model</td>
+<td>Baseline trt; switch-censoring in C columns</td>
+</tr>
+<tr class="even">
+<td>Composite</td>
+<td>HR for composite endpoint</td>
+<td>Same</td>
+<td>Baseline trt; composite in Y columns</td>
+</tr>
+<tr class="odd">
+<td>Principal stratum</td>
+<td>Not targeted</td>
+<td>Not targeted</td>
+<td>Baseline trt on oracle never-switcher subset</td>
 </tr>
 </tbody>
 </table>

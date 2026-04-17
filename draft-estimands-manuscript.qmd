@@ -1,0 +1,762 @@
+---
+title: "Estimand–Estimator Mismatch in Time-to-Event Safety Analyses"
+subtitle: "A simulation study using longitudinal targeted learning"
+format: docx
+bibliography: references.bib
+csl: vancouver-superscript.csl
+---
+
+
+
+```{r}
+#| label: setup
+#| include: false
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4,
+  fig.align = "center",
+  cache = TRUE,
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+```{r}
+#| label: load-packages
+library(tidyverse)
+library(survival)
+library(here)
+library(knitr)
+```
+
+```{r}
+#| label: source-helpers
+source(here("DGP.R"))
+source(here("R", "helpers.R"))
+source(here("R", "support_diagnostics.R"))
+
+cache_files <- c(
+  here("results", "lmtp_main.rds"),
+  here("results", "support_estimation.rds"),
+  here("results", "sim_study_main.rds"),
+  here("results", "sim_results", "ground_truth.rds")
+)
+missing <- cache_files[!file.exists(cache_files)]
+if (length(missing) > 0) {
+  warning("Missing cached results. Run R/run_cached_analyses.R first:\n",
+          paste(" ", basename(missing), collapse = "\n"))
+}
+```
+
+## Abstract
+
+**Background.** The ICH E9(R1) addendum defines five distinct strategies for handling intercurrent events in clinical trials. When treatment switching is driven by evolving clinical indicators that also affect the outcome, each strategy defines a different causal quantity, and the estimator must be chosen to target the quantity the scientific question requires.
+
+**Methods.** We compared four estimators---baseline-treatment Cox regression, censor-at-switch Cox, inverse probability of censoring weighted (IPCW) Cox, and the sequentially doubly robust longitudinal modified treatment policy (LMTP) estimator---across all five ICH E9(R1) estimand strategies in a 60-iteration simulation study (N = 10,000 per iteration) calibrated to the hepatitis B nephrotoxicity literature (HR = 2.0 before day 90, HR = 0.90 after; ~11% switching; ~16% 180-day event rate). We report bias, risk difference coverage (bootstrap for Cox; efficient influence function for LMTP), and---for Cox methods only---coverage of the true marginal hazard ratio.
+
+**Results.** LMTP achieved 98% RD coverage for the treatment-policy estimand, 86% for no-switch, 95% for composite, 95% for the oracle principal stratum, and 48% for while-on-treatment. Cox approaches achieved 8--52% RD coverage across the first three estimands. Strikingly, for the treatment-policy estimand the Cox HR confidence interval contained the true marginal HR in only 10% of iterations for the naive analysis and 0% of iterations for the censor-at-switch and IPCW analyses---the Cox HR confidently reports the wrong marginal quantity. Only for the composite estimand, which absorbs switching into the outcome, did Cox approaches achieve passable RD coverage (70--78%).
+
+**Conclusions.** Cox-based switching adjustments do not recover the marginal risk difference defined by any ICH E9(R1) estimand and, despite producing narrow confidence intervals, generally fail to cover the true marginal hazard ratio as well. LMTP targets the marginal risk difference directly, with inference that is consistent if either the treatment/censoring model or the outcome model is correctly specified. The same framework and lessons apply to other intercurrent events---informative censoring, informative monitoring, competing risks---each of which requires selecting a strategy for how it enters the analysis and an estimator aligned with that strategy.
+
+## Introduction
+
+Post-marketing safety analyses routinely ask whether a drug increases the risk of an adverse event. When treatment switching occurs during follow-up---and when switching is driven by evolving clinical indicators that also affect the outcome---the answer depends on how switching is handled. The ICH E9(R1) addendum [@ich2019] formalises this dependence through the estimand framework, requiring that each analysis specify the population, treatment, outcome, intercurrent events, and the strategy used for each intercurrent event.
+
+Different strategies define different causal quantities. A treatment-policy strategy follows all patients from initiation regardless of switching; a hypothetical strategy models a world where switching does not occur; a while-on-treatment strategy restricts attention to the period before switching. Each question has clinical relevance, and each requires a compatible estimator.
+
+In practice, analysts frequently apply Cox regression without verifying that the model's target---a conditional hazard ratio---corresponds to the intended estimand. This paper examines the consequences of that mismatch using a simulation study built around a hepatitis B safety scenario. We compare conventional Cox analyses to estimation via the longitudinal modified treatment policy (LMTP) framework, which directly targets marginal risk contrasts under specified interventions. The analysis concentrates on two estimands---treatment-policy and hypothetical no-switch---while reporting results for three additional strategies, and illustrates how the same data yield different estimates depending on the strategy employed and the degree to which the estimator matches it.
+
+We follow the causal roadmap for real-world evidence [@dang2023; @petersen2014], concentrating on estimand definition, identifiability assessment, and estimator selection.
+
+The clinical motivation comes from the hepatitis B nephrotoxicity literature comparing tenofovir disoproxil fumarate (TDF) and entecavir (ETV). TDF can cause proximal tubular toxicity and decline in kidney function during long-term therapy. A systematic review reported that TDF was associated with greater increases in serum creatinine and reductions in estimated glomerular filtration rate during the first 6--24 months of therapy relative to ETV, although the effect was generally modest [@lee2019]. Real-world cohort studies report a higher risk of kidney function decline among TDF patients during early follow-up, particularly among individuals with baseline renal risk factors [@jung2022; @mak2022]. These findings suggest a pattern of modestly elevated early renal risk that attenuates over longer follow-up. The simulation incorporates a non-proportional treatment effect structure reflecting this empirical pattern: an early hazard ratio above one and a later hazard ratio closer to the null.
+
+<!-- Note: severe kidney outcomes (kidney failure, RRT) are rarer than milder
+     measures (eGFR decline, CKD progression, serum creatinine, AKI). The
+     literature does not support a later protective effect of TDF. -->
+
+## Motivating Setting
+
+The simulation draws on concerns about nephrotoxicity in tenofovir-containing hepatitis B regimens relative to entecavir-based alternatives. Tenofovir disoproxil fumarate (TDF) can cause proximal tubular toxicity through a mitochondriopathy of the renal proximal tubules [@perazella2010; @kohler2009]; entecavir (ETV) is not similarly nephrotoxic [@izzedine2005]. In routine clinical practice, treatment assignment is confounded by baseline renal and hepatic risk factors: patients with pre-existing chronic kidney disease (CKD), cirrhosis, or older age may be selectively assigned to one regimen or the other based on perceived vulnerability.
+
+The primary intercurrent event in this setting is informative treatment switching. Early changes in renal markers (e.g., rises in serum creatinine, decline in eGFR) prompt physicians to switch patients off TDF to preserve kidney function. Because the same baseline factors that raise the risk of renal failure (most notably CKD) also drive the probability of switching, the switching process is informative: the switched population is systematically higher-risk than the population that remains on the assigned regimen. Any analysis that censors at the switch time, adjusts for switching as a time-varying covariate, or reweights on the switching probability must confront the fact that switching carries information about the outcome.
+
+The simulated cohort therefore encodes: (i) baseline confounding of treatment assignment by CKD, cirrhosis, age, and related risk factors; (ii) a non-proportional treatment effect on renal failure with early harm and late attenuation; and (iii) informative switching driven jointly by the assigned treatment and baseline CKD. This structure captures the core features of the clinical setting while remaining simple enough to permit closed-form Monte Carlo truth values for each ICH E9(R1) estimand.
+
+## Simulation Design
+
+### Data-generating process
+
+The function `generate_hep_data()` produces cohorts with confounded treatment assignment, a piecewise-exponential event process with non-proportional hazards (HR = 2.0 before day 90; HR = 0.90 after), and informative switching driven by treatment and CKD. The early hazard ratio of 2.0 reflects a deliberately strong treatment effect to make the pedagogical contrasts between estimands and estimators clearly visible; the attenuation to HR = 0.90 after day 90 creates a non-proportional structure consistent with the clinical pattern in the hepatitis B nephrotoxicity literature. The baseline hazard is calibrated to produce approximately 16% 180-day event rate. Switching rates are moderate (~11% overall, ~21% among active-arm CKD patients), producing a 2 percentage-point divergence between treatment-policy and no-switch estimands while maintaining approximately 19% never-switchers to support principal stratum analyses. When a patient switches, the post-switch event hazard changes to reflect the new treatment. Administrative censoring may depend on baseline risk when `dep_censor = TRUE`.
+
+```{r}
+#| label: tbl-dgp-params
+#| tbl-cap: "DGP parameters used throughout the simulation."
+
+dgp_params <- tibble::tibble(
+  Parameter = c("`h0`", "`HR_early`", "`HR_late`", "Change-point",
+                "`lambda_sw0`", "`gamma_A`", "`gamma_ckd`",
+                "`complexity`", "`dep_censor`",
+                "Event rate (180d)", "Switch rate (180d)",
+                "Switch rate (active, CKD)", "Never-switcher %"),
+  Value = c("5 × 10⁻³", "2.0", "0.90", "90 days",
+            "1 × 10⁻³", "0.80", "0.60",
+            "FALSE", "TRUE",
+            "~16%", "~11%", "~21%", "~19%"),
+  Description = c("Baseline hazard",
+                  "Treatment HR, days 0–90 (early harm)",
+                  "Treatment HR, days 90–180 (attenuation)",
+                  "Day at which the HR changes",
+                  "Baseline switching hazard",
+                  "log-HR for treatment on switching",
+                  "log-HR for CKD on switching",
+                  "Linear confounding (not nonlinear)",
+                  "Administrative censoring depends on baseline risk",
+                  "Observed 180-day event rate",
+                  "Observed 180-day switching rate",
+                  "Switching rate among active-arm CKD patients",
+                  "Proportion never-switchers (for principal stratum)")
+)
+kable(dgp_params, format = "pipe")
+```
+
+One dataset, generated under the treatment-policy regime (switching occurs, modifies the hazard, does not censor), supports all five estimand analyses. The raw timing variables---`event_time`, `switch_time`, `censor_admin`---are retained, and the helper function `derive_estimand()` redefines `follow_time` and `event` for each strategy. For the no-switch truth, a separate dataset is generated with switching suppressed entirely (`switch_on = FALSE`).
+
+```{r}
+#| label: generate-data
+#| cache: true
+set.seed(2026)
+dat <- generate_hep_data(
+  N           = 10000,
+  h0          = 5e-3,
+  HR_early    = 2.0,
+  HR_late     = 0.90,
+  np_hazard   = TRUE,
+  dep_censor  = TRUE,
+  complexity  = FALSE,
+  lambda_sw0  = 1e-3,
+  gamma_A     = 0.80,
+  gamma_ckd   = 0.60,
+  seed        = 2026
+)
+```
+
+```{r}
+#| label: data-summary
+
+data_summary <- tibble::tibble(
+  Quantity = c("Sample size", "180-day event rate", "Switching rate",
+               "Switching rate (active, CKD)", "Switching rate (comparator)",
+               "Median follow-up (days)"),
+  Value = c(format(nrow(dat), big.mark = ","),
+            round(mean(dat$event), 3),
+            round(mean(dat$switched), 3),
+            round(mean(dat$switched[dat$treatment == 1 & dat$ckd == 1]), 3),
+            round(mean(dat$switched[dat$treatment == 0]), 3),
+            round(median(dat$follow_time), 0))
+)
+kable(data_summary, format = "pipe", caption = "Simulated cohort characteristics")
+```
+
+```{r}
+#| label: fig-dag
+#| fig-cap: "Assumed causal structure. Baseline confounders (W) affect treatment assignment, switching, censoring, and renal failure. Switching modifies the post-switch hazard for renal failure."
+#| fig-width: 8
+#| fig-height: 5
+library(dagitty)
+library(ggdag)
+
+dag_safety <- dagify(
+  Treatment ~ W,
+  Switch ~ Treatment + W,
+  Censoring ~ Switch + W,
+  RenalFailure ~ Treatment + Switch + W,
+  exposure = "Treatment", outcome = "RenalFailure",
+  labels = c(W = "Baseline\nconfounders\n(CKD, age, ...)",
+             Treatment = "Treatment\n(active vs comparator)",
+             Switch = "Regimen\nswitch",
+             Censoring = "Censoring",
+             RenalFailure = "Renal\nfailure"),
+  coords = list(
+    x = c(W = 1, Treatment = 0, Switch = 1, Censoring = 2, RenalFailure = 1.5),
+    y = c(W = 1, Treatment = 0, Switch = 0, Censoring = 0, RenalFailure = -1)
+  )
+)
+ggdag(dag_safety, text = FALSE, use_labels = "label", text_size = 3) +
+  theme_dag()
+```
+
+### Known truth
+
+Because the DGP is fully specified, true marginal risks can be computed by generating large counterfactual datasets (N = 500,000 per arm) under each policy, with no dependent censoring.
+
+```{r}
+#| label: compute-truth
+
+truth_cache <- here("results", "sim_results", "ground_truth.rds")
+stopifnot("Run R/run_cached_analyses.R first" = file.exists(truth_cache))
+truth_all <- readRDS(truth_cache)
+```
+
+```{r}
+#| label: tbl-truth
+#| tbl-cap: "True 180-day risks by estimand strategy (Monte Carlo, N = 500,000 per arm)"
+
+truth_summary <- tibble::tibble(
+  Strategy = c("Treatment-policy", "Hypothetical no-switch",
+               "While-on-treatment", "Composite", "Principal stratum"),
+  `Risk (active)` = c(truth_all$treatment_policy$true_risk_1,
+                       truth_all$no_switch$true_risk_1,
+                       truth_all$while_on_treatment$true_risk_1,
+                       truth_all$composite$true_risk_1,
+                       truth_all$principal_stratum$true_risk_1),
+  `Risk (comparator)` = c(truth_all$treatment_policy$true_risk_0,
+                           truth_all$no_switch$true_risk_0,
+                           truth_all$while_on_treatment$true_risk_0,
+                           truth_all$composite$true_risk_0,
+                           truth_all$principal_stratum$true_risk_0),
+  `Risk difference` = c(truth_all$treatment_policy$true_rd,
+                         truth_all$no_switch$true_rd,
+                         truth_all$while_on_treatment$true_rd,
+                         truth_all$composite$true_rd,
+                         truth_all$principal_stratum$true_rd),
+  `Marginal HR` = c(truth_all$treatment_policy$true_hr,
+                     truth_all$no_switch$true_hr,
+                     truth_all$while_on_treatment$true_hr,
+                     truth_all$composite$true_hr,
+                     truth_all$principal_stratum$true_hr)
+)
+kable(truth_summary, digits = 4, format = "pipe")
+```
+
+The treatment-policy risk difference is positive: the active drug causes early harm (HR = 2.0 before day 90), and although the ~11% of patients who switch to the comparator escape the late-period elevated hazard, the accumulated early risk in the remainder of the active arm is not fully offset. Under the no-switch strategy, where patients remain on their assigned treatment for the full 180 days, the risk difference reflects the full non-proportional hazard structure (HR = 2.0 early, HR = 0.90 late). Because the late-period hazard ratio falls below 1, sustained treatment without switching partially offsets the early harm, but the net effect remains positive. The no-switch risk difference (+9.1 pp) exceeds the treatment-policy difference (+7.1 pp) by 2 percentage points, reflecting the risk that switchers avoid by leaving the active arm. The composite strategy produces the largest risk difference because the active arm experiences substantially more switching, and switching itself counts as an event.
+
+The while-on-treatment truth differs from the no-switch truth because follow-up is truncated at switching. Subjects who switch before 180 days contribute only their pre-switch person-time; the 180-day risk is computed under this truncation rule, not as a conditional risk among non-switchers. The principal stratum further restricts to the latent subpopulation who would not switch under *either* treatment assignment.
+
+### Magnitude of treatment-policy vs no-switch divergence
+
+Under the simulation DGP, the treatment-policy and no-switch risk differences differ by 2 percentage points (+7.1% vs +9.1%). This gap is driven by two components: (i) the ~11% of active-arm patients who switch, escaping the residual late-period hazard; and (ii) the net harm associated with the early-period HR of 2.0, which is partially offset by the later HR of 0.90 for patients who do not switch.
+
+The divergence grows as switching becomes more prevalent. In a sensitivity DGP explored during development (switching rate ~31%, achieved by increasing `lambda_sw0` and `gamma_A`), the gap widened to 6.5 percentage points (+2.6% treatment-policy vs +9.1% no-switch). In oncology crossover settings with predominantly unidirectional switching rates of 30--40% and large post-switch hazard changes, the two estimands would differ more dramatically still: treatment-policy would be sharply attenuated because a substantial fraction of active-arm patients avoid the event by switching early, while no-switch would preserve the full effect. The choice of estimand therefore materially shapes the reported treatment effect whenever switching is common.
+
+### Treatment crossover in oncology: a canonical example
+
+The tension between treatment-policy and no-switch estimands is particularly acute in oncology trials where patients randomised to the control arm are permitted to cross over to the experimental treatment after disease progression. This design is common when withholding a promising therapy from progressing patients is considered unethical, but it creates a structural problem for the analysis.
+
+Under the treatment-policy estimand, patients are followed as randomised regardless of crossover. If the experimental drug is effective, control-arm crossover patients benefit from it after progression, and their subsequent survival improves relative to what it would have been without crossover. The treatment-policy survival difference between arms is therefore attenuated: the experimental arm's advantage is diluted because the control arm partially receives the same treatment. Regulatory agencies evaluating the drug face a dilemma: the intent-to-treat analysis is unbiased for the treatment-policy question, but that question may understate the drug's efficacy in a world where patients do not have access to the experimental treatment outside the trial.
+
+The no-switch (hypothetical) estimand asks what the survival difference would have been if no crossover had occurred. This is the quantity most relevant for drug approval decisions, because it estimates the benefit of making the drug available as a first-line treatment---the counterfactual where control patients never receive it. The no-switch risk difference is typically larger than the treatment-policy difference, because it removes the crossover-induced attenuation.
+
+Which estimand is appropriate depends on the regulatory and clinical question. For health technology assessment---where the decision is whether to reimburse the drug as first-line therapy---the no-switch estimand is often preferred, because it reflects the policy-relevant comparison: a world where the drug is available versus a world where it is not [@latimer2014; @latimer2015]. For a safety analysis---where the question is what happens in routine clinical practice, including treatment modifications---the treatment-policy estimand may be more relevant, because it captures the real-world consequences of prescribing the drug, including the possibility that physicians will switch patients who experience adverse events.
+
+In oncology, several statistical methods have been developed to recover the no-switch estimand from crossover-contaminated data, including rank-preserving structural failure time models (RPSFTM), inverse probability of censoring weighting (IPCW), and two-stage estimation [@latimer2014]. These methods share the goal of adjusting for the post-randomisation treatment change, but they differ in their assumptions: RPSFTM assumes a common treatment effect, IPCW assumes no unmeasured confounders of the crossover decision, and two-stage estimation combines elements of both. The LMTP approach used in this paper generalises the IPCW logic within a doubly robust framework that models both the treatment/switching process and the outcome.
+
+The hepatitis B safety setting studied here differs from the oncology crossover scenario in two respects. First, switching is from the active (potentially harmful) drug to the comparator, rather than from control to experimental. Second, switching rates are moderate (~11%) and the post-switch hazard change is modest, so the treatment-policy and no-switch truths differ by 2 percentage points rather than the much larger gaps typical of oncology crossover trials. Nevertheless, even in this more modest setting, the choice between estimands produces meaningfully different clinical conclusions, and the gap scales with switching intensity.
+
+## Estimand Framework
+
+The ICH E9(R1) addendum defines five strategies for handling intercurrent events. Each corresponds to a different hypothetical experiment and therefore a different causal quantity. We define all five below, specifying for each the counterfactual intervention, how the truth is computed in the simulation, and how LMTP implements the corresponding estimator.
+
+### Treatment-policy
+
+*Target trial:* Randomise patients to active or comparator at baseline. Follow all patients for 180 days regardless of any treatment changes. If a patient switches regimens, continue following them — the switch and its consequences are part of what happens under the assigned strategy.
+
+*Counterfactual:* $Y^{a}(180)$ is the renal-failure indicator under baseline assignment $a$, with switching occurring naturally. The target is $\psi^{TP} = E[Y^{a=1}(180)] - E[Y^{a=0}(180)]$.
+
+*Truth:* Generate 500,000 all-treated and all-control subjects with switching enabled (`switch_on = TRUE`). Post-switch hazards change to reflect the new treatment. Follow-up is not censored at switch. Compute 180-day cumulative incidence in each arm.
+
+*LMTP implementation:* Treatment is modelled as a single baseline variable (`time_varying_trt = FALSE`). The intervention sets $A = 1$ or $A = 0$ at baseline. Post-baseline switching is part of the natural course; the LMTP censoring model adjusts for informative follow-up loss but does not intervene on treatment at later time points.
+
+### Hypothetical no-switch
+
+*Target trial:* Randomise patients to active or comparator at baseline. Prevent any patient from switching for the entire 180-day follow-up — a hypothetical intervention on the post-baseline treatment process.
+
+*Counterfactual:* $Y^{a, \bar{s}=0}(180)$ is the renal-failure indicator under baseline assignment $a$ and the intervention that sets switching to zero at all times. The target is $\psi^{HYP} = E[Y^{a=1, \bar{s}=0}(180)] - E[Y^{a=0, \bar{s}=0}(180)]$.
+
+*Truth:* Generate 500,000 all-treated and all-control subjects with switching suppressed entirely (`switch_on = FALSE`). Event times are drawn under sustained assigned treatment.
+
+*LMTP implementation:* Treatment is modelled as time-varying ($A_1, \ldots, A_{13}$), where each $A_j$ reflects the observed treatment at biweekly bin $j$ (baseline assignment before switch, opposite after). The static binary intervention overrides all $A_j$ to hold treatment constant — directly implementing the "no switching" counterfactual. Identification requires no unmeasured confounders of the switching decision at each time point (sequential exchangeability).
+
+### While-on-treatment
+
+*Target trial:* Randomise patients to active or comparator. Follow each patient only while they remain on their assigned treatment. If a patient switches, their follow-up ends at the switch time — they contribute person-time and events only while on the original regimen.
+
+*Counterfactual:* The target is the 180-day risk of renal failure under baseline treatment with follow-up truncated at switching.
+
+*Truth:* Generate 500,000 all-treated and all-control subjects with switching enabled. The 180-day risk is computed directly as the proportion of subjects whose event occurs before both their switch time and 180 days: `mean(event_time <= min(switch_time, 180))`. Under counterfactual uniform treatment with no dependent administrative censoring, this Monte Carlo average is the exact WOT risk.
+
+*LMTP implementation:* Treatment is modelled as baseline-only (`time_varying_trt = FALSE`). Switching enters through the censoring nodes: `censor_at_switch = TRUE` encodes switching-induced censoring in the C columns alongside administrative censoring. The LMTP censoring model adjusts for the informative component of switch-censoring. This is a proper censoring-based WOT analysis, not a treatment-node intervention to prevent switching.
+
+### Composite
+
+*Target trial:* Randomise patients to active or comparator. Define the outcome as the first occurrence of renal failure *or* treatment switching, whichever happens first. Follow all patients for 180 days.
+
+*Counterfactual:* $Y_{comp}^{a}(180) = I(\min(T_{event}^{a}, T_{switch}^{a}) \leq 180)$. The target is $\psi^{COMP} = E[Y_{comp}^{a=1}(180)] - E[Y_{comp}^{a=0}(180)]$.
+
+*Truth:* Generate all-treated and all-control with switching enabled. Apply `derive_estimand("composite")`, which redefines the event as the first of renal failure or switching. Compute 180-day risk of the composite endpoint.
+
+*LMTP implementation:* Treatment is modelled as baseline-only (`time_varying_trt = FALSE`), because switching is part of the outcome, not a treatment node. The composite outcome is encoded in the Y columns; the LMTP censoring model adjusts only for administrative censoring.
+
+### Principal stratum
+
+*Target trial:* Randomise patients to active or comparator. Restrict the analysis to the latent subpopulation of "never-switchers" — patients who would not switch under *either* treatment assignment.
+
+*Counterfactual:* $\psi^{PS} = E[Y^{a=1}(180) \mid S^{a=1} > \tau,\, S^{a=0} > \tau] - E[Y^{a=0}(180) \mid S^{a=1} > \tau,\, S^{a=0} > \tau]$. The principal stratum is defined by joint potential switching outcomes — a latent quantity that cannot be observed for any individual.
+
+*Truth:* Generate all-treated and all-control with the same random seed for baseline covariates (`return_potential_switching = TRUE`). Draw potential switching times under both treatments using paired random number streams. Identify subjects who would not switch under either assignment (`never_switcher = 1`). Compute 180-day risk within this stratum.
+
+*LMTP implementation:* The primary simulation analysis uses the oracle `never_switcher` indicator to restrict the dataset to the true principal stratum, then estimates the 180-day risk difference within this subgroup under baseline treatment assignment (`time_varying_trt = FALSE`). This oracle analysis uses simulation-only information not available in practice, but allows clean comparison of the estimator against the principal stratum truth. A supplementary analysis restricts to observed non-switchers (`switched == 0`) as a convenience approximation.
+
+*Principal stratum versus observed non-switchers.* The principal stratum is defined by joint potential switching outcomes under both treatment assignments: a subject belongs to the stratum if and only if they would not switch within the follow-up horizon regardless of which treatment they received. This subgroup is latent — it depends on cross-world counterfactual information and cannot be identified from observed switching behaviour under a single realised treatment. By contrast, observed non-switchers are subjects who happened not to switch under their assigned treatment and observed covariate history. Because observed non-switching is a post-treatment event that depends on the realised treatment path, the set of observed non-switchers under treatment $a=1$ generally differs from the set under $a=0$, and neither coincides with the principal stratum. Restricting an analysis to observed non-switchers therefore selects a different subpopulation — typically lower-risk, since high-CKD patients are more likely to switch — and should be interpreted as a descriptive subgroup analysis or proxy, not as identification of the principal stratum estimand.
+
+### Summary
+
+The main simulation results focus on the treatment-policy and no-switch estimands, which illustrate the estimand–estimator mismatch most directly. While-on-treatment, composite, and principal stratum results are reported in supplementary tables.
+
+## Estimation Strategies
+
+### Cox regression
+
+Three Cox-based approaches are commonly used in the presence of switching.
+
+```{r}
+#| label: cox-fits
+tau <- 180
+covars <- c("age", "ckd", "cirrhosis", "diabetes", "heart_failure")
+cox_naive <- fit_cox_naive(dat, tau = tau, covars = covars)
+cox_cs    <- fit_cox_censor_switch(dat, tau = tau, covars = covars)
+cox_td    <- fit_cox_td(dat, tau = tau, covars = covars)
+km_naive  <- km_risk_at(cox_naive$survfit, t = tau)
+km_cs     <- km_risk_at(cox_cs$survfit, t = tau)
+```
+
+```{r}
+#| label: tbl-cox
+#| tbl-cap: "Cox regression estimates (single dataset, N = 10,000). KM risk difference is unadjusted."
+
+cox_tbl <- tibble::tibble(
+  Analysis = c("Baseline treatment only",
+               "Censor at switch",
+               "Time-dependent treatment"),
+  `Adjusted HR` = round(c(cox_naive$hr, cox_cs$hr, cox_td$hr), 3),
+  `HR 95% CI` = c(
+    paste0(round(cox_naive$ci_low, 3), "--", round(cox_naive$ci_high, 3)),
+    paste0(round(cox_cs$ci_low, 3), "--", round(cox_cs$ci_high, 3)),
+    paste0(round(cox_td$ci_low, 3), "--", round(cox_td$ci_high, 3))),
+  `KM risk diff.` = c(round(km_naive$risk_diff, 4),
+                       round(km_cs$risk_diff, 4), NA)
+)
+kable(cox_tbl, format = "pipe")
+```
+
+```{r}
+#| label: fig-km-curves
+#| fig-cap: "Unadjusted Kaplan-Meier survival curves by treatment arm. Left: full follow-up (treatment-policy). Right: censored at switch."
+#| fig-height: 4
+#| fig-width: 10
+
+# KM: treatment-policy (no censor at switch)
+dat_km <- dat %>%
+  mutate(time_use = pmin(follow_time, tau),
+         event_use = as.integer(event == 1 & follow_time <= tau))
+sf_naive <- survfit(Surv(time_use, event_use) ~ treatment, data = dat_km)
+
+# KM: censor at switch
+dat_cs <- dat %>%
+  mutate(time_cs = pmin(follow_time, tau),
+         event_cs = as.integer(event == 1 & follow_time <= tau))
+if ("switch_time" %in% names(dat_cs)) {
+  sw_before <- dat_cs$switched == 1 & dat_cs$switch_time < dat_cs$time_cs
+  dat_cs$time_cs[sw_before]  <- pmin(dat_cs$switch_time[sw_before], tau)
+  dat_cs$event_cs[sw_before] <- 0L
+}
+sf_cs <- survfit(Surv(time_cs, event_cs) ~ treatment, data = dat_cs)
+
+# Plot using base R survfit plot (no survminer dependency)
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+
+plot(sf_naive, col = c("steelblue", "tomato"), lwd = 2,
+     xlab = "Days", ylab = "Survival probability",
+     main = "Full follow-up (treatment-policy)")
+legend("bottomleft", c("Comparator", "Active"),
+       col = c("steelblue", "tomato"), lwd = 2, bty = "n", cex = 0.9)
+
+plot(sf_cs, col = c("steelblue", "tomato"), lwd = 2,
+     xlab = "Days", ylab = "Survival probability",
+     main = "Censored at switch")
+legend("bottomleft", c("Comparator", "Active"),
+       col = c("steelblue", "tomato"), lwd = 2, bty = "n", cex = 0.9)
+```
+
+The baseline-treatment Cox model ignores switching and is often interpreted as a treatment-policy analysis. Under non-proportional hazards, however, the Cox HR is a weighted average of time-specific hazard ratios, and the weights depend on the censoring distribution [@rufibach2019]. When CKD confounds both treatment and the outcome, the unadjusted KM risk difference reflects confounding rather than a causal contrast.
+
+The censor-at-switch model is sometimes used to approximate a hypothetical or while-on-treatment analysis. It assumes that switching is non-informative given baseline covariates. In this DGP, CKD drives both switching and renal failure, so the assumption is violated: censoring selectively removes high-risk person-time from the active arm.
+
+The time-dependent model includes current treatment status as a covariate and estimates a conditional HR for current exposure. This does not correspond to a marginal risk contrast under any of the estimand strategies above, and requires the strong assumption of no unmeasured time-varying confounding of the switching decision.
+
+Each Cox analysis estimates a conditional hazard ratio. None directly targets the marginal risk difference defined by either the treatment-policy or hypothetical estimand. This distinction---between the parameter a model estimates and the parameter the scientific question requires---is the central concern of this paper.
+
+**On the hazard ratio as a causal parameter.** Even in a randomised trial, the population-level HR at time $t$ compares groups whose composition has been differentially altered by prior events [@stensrud2019]. The individual-level causal HR requires conditional independence of counterfactual survival times [@martinussen2022], an untestable assumption. Under non-proportional hazards, the Cox HR additionally depends on the censoring distribution. Survival-function contrasts---risk differences, risk ratios, restricted mean survival time---avoid several of these difficulties.
+
+### LMTP
+
+The `lmtp` package [@williams2023] implements longitudinal modified treatment policies via the sequentially doubly robust (SDR) estimator. It targets a marginal survival probability under a specified intervention, adjusting for time-varying confounding, and provides inference that is consistent if either the outcome model or the treatment/censoring model is correctly specified.
+
+```{r}
+#| label: lmtp-estimates
+lmtp_cache <- here("results", "lmtp_main.rds")
+stopifnot("Run R/run_cached_analyses.R first" = file.exists(lmtp_cache))
+lmtp_res <- readRDS(lmtp_cache)
+rd <- lmtp_res$contrast_rd$estimates
+rr <- lmtp_res$contrast_rr$estimates
+```
+
+```{r}
+#| label: tbl-lmtp
+#| tbl-cap: "LMTP estimates under static interventions (single dataset, N = 10,000, biweekly bins)"
+
+# LMTP contrast is on survival scale S(1)-S(0); negate for risk scale R(1)-R(0)
+lmtp_tbl <- tibble::tibble(
+  Contrast = c("Risk difference (active − comparator)",
+               "Risk ratio (active / comparator)"),
+  Estimate = c(round(-rd$estimate, 4), round(rr$estimate, 3)),
+  `95% CI` = c(
+    paste0(round(-rd$conf.high, 4), " to ", round(-rd$conf.low, 4)),
+    paste0(round(rr$conf.low, 3), " to ", round(rr$conf.high, 3)))
+)
+kable(lmtp_tbl, format = "pipe")
+```
+
+Follow-up is discretised into biweekly bins (13 time points). The current Super Learner library includes `SL.mean`, `SL.glm`, and `SL.bayesglm` with 2-fold cross-validation; production analyses should use a richer library and more folds [@gruber2022].
+
+The LMTP specification differs by estimand:
+
+- **Treatment-policy:** Baseline treatment only. Post-baseline switching is part of the natural course; the LMTP censoring model handles informative follow-up loss.
+- **No-switch:** Time-varying treatment ($A_1, \ldots, A_{13}$). The static binary intervention holds treatment constant at every bin, preventing switching.
+- **While-on-treatment:** Baseline treatment only. Switching enters through the censoring nodes (`censor_at_switch = TRUE`); the LMTP censoring model adjusts for informative switch-censoring. This is a censoring-based estimand, not a treatment-node intervention.
+- **Composite:** Baseline treatment only. Switching is part of the outcome (Y columns).
+- **Principal stratum:** Baseline treatment only, applied to the oracle never-switcher subset.
+
+These three mechanisms — natural course, treatment intervention, and censoring — must be matched to the estimand.
+
+## Empirical Support Diagnostics {#sec-support}
+
+Positivity requires that the probability of receiving each treatment remains bounded away from zero within every confounder stratum. In longitudinal settings, this extends to a sequential condition on treatment and censoring probabilities at each time point [@gruber2022]. We examine three scenarios that vary switching intensity while holding treatment assignment fixed.
+
+```{r}
+#| label: support-scenarios
+#| cache: true
+set.seed(101)
+dat_good <- generate_hep_data(
+  N = 5000, h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
+  np_hazard = TRUE, dep_censor = TRUE, complexity = FALSE,
+  lambda_sw0 = 1e-3, gamma_A = 0.80, gamma_ckd = 0.60, seed = 101)
+set.seed(102)
+dat_strained <- generate_hep_data(
+  N = 5000, h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
+  np_hazard = TRUE, dep_censor = TRUE, complexity = FALSE,
+  lambda_sw0 = 3e-3, gamma_A = 1.2, gamma_ckd = 0.8, seed = 102)
+set.seed(103)
+dat_poor <- generate_hep_data(
+  N = 5000, h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
+  np_hazard = TRUE, dep_censor = TRUE, complexity = FALSE,
+  gamma_A = 2.0, gamma_ckd = 1.5, lambda_sw0 = 8e-3, seed = 103)
+```
+
+Because treatment assignment is identical across scenarios, treatment propensity scores do not change. The relevant diagnostic is the predicted switching probability, which shifts substantially as switching intensity increases.
+
+```{r}
+#| label: fig-support
+#| fig-cap: "Predicted switching probability by treatment arm across three support scenarios."
+#| fig-height: 9
+#| fig-width: 7
+scenario_list <- list(
+  "1. Good support" = dat_good,
+  "2. Strained support" = dat_strained,
+  "3. Poor support" = dat_poor)
+support_plots <- plot_support_scenarios(scenario_list)
+support_plots$by_treatment
+```
+
+```{r}
+#| label: fig-support-ckd
+#| fig-cap: "Switching probability by CKD status. Under poor support, CKD patients switch near-deterministically."
+#| fig-height: 9
+#| fig-width: 7
+support_plots$by_ckd
+```
+
+```{r}
+#| label: tbl-support-est
+#| tbl-cap: "Estimation across support scenarios"
+support_cache <- here("results", "support_estimation.rds")
+stopifnot("Run R/run_cached_analyses.R first" = file.exists(support_cache))
+support_results <- readRDS(support_cache)
+kable(support_results, digits = 3, format = "pipe")
+```
+
+Under good support (~11% switching), all estimators produce stable results. As switching intensity increases, the censor-at-switch HR diverges from the baseline-treatment HR because censoring removes a progressively larger and more selected subset of the active arm. LMTP estimates show wider confidence intervals and increased bias as the censoring model must extrapolate into poorly supported regions.
+
+## Simulation Results
+
+### Performance metrics
+
+We assess estimator performance over repeated samples (N = 10,000 each) across all five estimand strategies. Each iteration generates one dataset and applies four estimators---baseline-treatment Cox, censor-at-switch Cox, IPCW-weighted Cox, and LMTP SDR. Each estimator produces a point estimate and a confidence interval for one or more target quantities.
+
+We report two classes of performance metrics, reflecting the fact that different estimators target different parameters:
+
+**Estimand-level metrics (risk difference scale).** For every estimator we compute the marginal 180-day risk difference and compare it against the true RD for each estimand. Bias is the mean estimate minus the truth; coverage is the proportion of iterations in which the 95% CI contains the true RD. LMTP confidence intervals come directly from the efficient influence function. Cox methods produce a Kaplan--Meier risk difference; we attach bootstrap (200 replicates) 95% CIs for the KM-RD to enable coverage comparison on the same scale as LMTP.
+
+**Estimator-level metrics (hazard ratio scale).** Cox methods also produce a conditional hazard ratio with a model-based CI. We compute the true marginal HR for each estimand (via a Cox regression on the counterfactual potential outcomes, N = 500,000) and report the proportion of Cox HR CIs containing this truth. This tests whether the Cox HR, interpreted as a summary of the treatment-comparator hazard contrast, recovers the correct quantity. LMTP does not target an HR and is not evaluated on this scale.
+
+Reporting both metrics exposes two distinct failure modes. A Cox method can report an HR CI that excludes the true marginal HR (estimator mis-targets the parameter) and a KM-RD CI that excludes the true RD (the scale differs and the method does not adjust for the confounding/censoring mechanism). LMTP targets the RD directly and is evaluated only on the RD scale.
+
+### Primary results
+
+The results below are from the 60-iteration production run (N = 10,000 per iteration).
+
+```{r}
+#| label: sim-load
+source(here("R", "run_simulations.R"))
+# Prefer production cache; fall back to test cache if production not yet complete
+sim_cache <- if (file.exists(here("results", "sim_study_main.rds"))) {
+  here("results", "sim_study_main.rds")
+} else {
+  here("results", "sim_study_test.rds")
+}
+stopifnot("Run R/run_cached_analyses.R or R/run_sim_test.R first" = file.exists(sim_cache))
+sim_results <- readRDS(sim_cache)
+```
+
+The primary comparison focuses on the treatment-policy and no-switch estimands, which illustrate the estimand--estimator mismatch most directly. The treatment-policy estimand (true RD = +0.071, true HR = 1.36) reflects the real-world consequence of prescribing the drug, including switching; the no-switch estimand (true RD = +0.091, true HR = 1.48) reveals the harm patients would face without switching---a 2 percentage-point gap from the same underlying data. All five estimands produce distinct true risk differences (Table @tbl-sim-main), demonstrating how the choice of intercurrent event strategy shapes the clinical conclusion.
+
+**Treatment-policy.** LMTP recovers the true RD with minimal bias (+0.0767 estimated vs +0.071 true, bias +0.006) and 98% RD coverage---essentially nominal. All three Cox approaches overestimate harm in terms of both KM-RD and HR. The adjusted Cox naive (HR = 1.60, KM-RD = +0.100) is inflated by residual confounding; RD coverage is 48% and HR coverage is 10%. The censor-at-switch Cox (HR = 1.78, KM-RD = +0.118) is further distorted by informative censoring, with 10% RD coverage and 0% HR coverage. The IPCW-weighted Cox (HR = 1.79, KM-RD = +0.120) provides no improvement over the unweighted censor-at-switch analysis, illustrating that inverse probability weights based on a misspecified switching model offer little correction. Across 60 iterations, the HR CIs from censor-at-switch and IPCW Cox never contain the true marginal HR.
+
+**No-switch.** All three Cox approaches yield identical estimates (HR = 1.73, KM-RD = +0.120) because the Cox data are generated without switching; none of the switching-adjustment mechanisms has anything to work on. HR coverage is 8% and RD coverage is 47--52%. The LMTP no-switch estimator uses the treatment-policy data (where switching is observed) and intervenes via time-varying treatment nodes to hold treatment constant---directly implementing the hypothetical "no switching" counterfactual. The LMTP estimate (+0.131) is biased upward (+0.040) but achieves 86% RD coverage, reflecting the inherent difficulty of modelling the switching process to support a counterfactual "no switching" intervention.
+
+**While-on-treatment.** WOT is the hardest estimand for both classes of methods. All Cox approaches produce the same KM-RD (+0.118) with 8% RD coverage and 7% HR coverage. LMTP WOT uses a censoring-based specification (`censor_at_switch = TRUE`) to adjust for informative switching, yielding KM-RD = +0.099 (bias +0.036) and 48% RD coverage---better than Cox but substantially below nominal. The difficulty stems from the censoring model having to learn the treatment-dependent switching process from a minimal learner library.
+
+**Composite.** This is the one estimand where Cox approaches work comparably to LMTP. The composite outcome absorbs switching, removing the need for any switching-adjustment mechanism. Cox RD coverage ranges from 70--78% across approaches (bias +0.022), while LMTP achieves 95% coverage with bias +0.006. HR coverage for composite Cox is 38%, the highest of any Cox-estimand combination but still well below nominal.
+
+**Principal stratum.** The oracle LMTP analysis (restricted to the ~19% never-switcher subpopulation identified by paired potential switching draws) recovers the true RD with bias +0.006 and 95% RD coverage. Cox naive on the full dataset achieves 97% RD coverage and 60% HR coverage for this estimand---substantially better than for other estimands. This reflects a structural feature of the DGP rather than a coincidence: under moderate switching selection (`gamma_A` = 0.80, `gamma_ckd` = 0.60), the never-switcher subpopulation is compositionally similar to the overall cohort, so a well-adjusted Cox on the full data happens to land near the PS truth. Under stronger switching selection---where switching is dominated by high-risk patients (e.g., large `gamma_A` or `gamma_ckd`)---the never-switcher stratum would be substantially lower-risk than the overall cohort, and the Cox naive analysis on the full data would overestimate the PS risk difference just as it does for the other estimands. The observed-non-switcher LMTP approximation shows substantially worse bias (+0.042) and 40% RD coverage, confirming that observed non-switchers are a different and generally lower-risk subpopulation than the principal stratum.
+
+```{r}
+#| label: tbl-sim-main
+#| tbl-cap: "Simulation results for treatment-policy and no-switch estimands (N = 10,000). Bias is the mean estimate minus the truth. RD coverage is the proportion of 95% CIs (bootstrap for Cox KM-RD; efficient influence function for LMTP) containing the true RD. HR coverage is the proportion of Cox HR CIs containing the true marginal HR; LMTP does not target an HR."
+
+estimand_labels <- c(
+  treatment_policy   = "Treatment-policy",
+  no_switch          = "No-switch",
+  while_on_treatment = "While-on-treatment",
+  composite          = "Composite",
+  principal_stratum  = "Principal stratum"
+)
+
+sim_summaries <- lapply(names(truth_all), function(est) {
+  if (!est %in% sim_results$estimand) return(NULL)
+  sub <- sim_results %>% filter(estimand == est)
+  s <- summarize_simulation(sub,
+         truth_rd = truth_all[[est]]$true_rd,
+         truth_rr = truth_all[[est]]$true_rr,
+         truth_hr = truth_all[[est]]$true_hr)
+  s$estimand_label <- estimand_labels[est]
+  s
+}) %>% bind_rows()
+
+# Main table: treatment-policy and no-switch only
+sim_main <- sim_summaries %>%
+  filter(estimand %in% c("treatment_policy", "no_switch")) %>%
+  select(estimand_label, method, n_converged,
+         mean_hr, mean_rd, bias_rd, coverage_rd, coverage_hr) %>%
+  rename(Strategy = estimand_label, Estimator = method,
+         `n conv.` = n_converged,
+         `Mean HR` = mean_hr,
+         `Mean RD` = mean_rd, `RD bias` = bias_rd,
+         `RD cov.` = coverage_rd, `HR cov.` = coverage_hr) %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.nan(.), NA, .)))
+
+kable(sim_main, digits = 4, format = "pipe")
+```
+
+```{r}
+#| label: fig-sim-rd
+#| fig-cap: "Distribution of risk difference estimates across 60 iterations for the treatment-policy and no-switch strategies. Dashed line: true RD."
+#| fig-height: 5
+#| fig-width: 9
+
+sim_plot_main <- sim_results %>%
+  filter(converged, !is.na(risk_diff),
+         estimand %in% c("treatment_policy", "no_switch")) %>%
+  mutate(estimand_label = estimand_labels[estimand])
+
+truth_main <- tibble(
+  estimand_label = c("Treatment-policy", "No-switch"),
+  xint = c(truth_all$treatment_policy$true_rd,
+           truth_all$no_switch$true_rd))
+
+ggplot(sim_plot_main, aes(x = risk_diff, fill = method)) +
+  geom_histogram(alpha = 0.6, bins = 15, position = "identity") +
+  facet_wrap(~ estimand_label, scales = "free_x") +
+  geom_vline(data = truth_main,
+             aes(xintercept = xint), linetype = "dashed", color = "red") +
+  labs(x = "Risk difference", y = "Count", fill = "Estimator") +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+```
+
+### Supplementary: remaining strategies
+
+```{r}
+#| label: tbl-sim-supp
+#| tbl-cap: "Simulation results for while-on-treatment, composite, and principal stratum strategies (60 iterations). LMTP achieves near-nominal coverage for the composite and principal stratum estimands; the while-on-treatment estimand is the weakest-performing specification (see Limitations)."
+
+sim_supp <- sim_summaries %>%
+  filter(!estimand %in% c("treatment_policy", "no_switch")) %>%
+  select(estimand_label, method, n_converged,
+         mean_hr, mean_rd, bias_rd, coverage_rd, coverage_hr) %>%
+  rename(Strategy = estimand_label, Estimator = method,
+         `n conv.` = n_converged,
+         `Mean HR` = mean_hr,
+         `Mean RD` = mean_rd, `RD bias` = bias_rd,
+         `RD cov.` = coverage_rd, `HR cov.` = coverage_hr) %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.nan(.), NA, .)))
+
+kable(sim_supp, digits = 4, format = "pipe")
+```
+
+```{r}
+#| label: fig-sim-supp
+#| fig-cap: "Distribution of risk difference estimates for supplementary estimands (60 iterations). Dashed line: true RD."
+#| fig-height: 5
+#| fig-width: 9
+
+sim_plot_supp <- sim_results %>%
+  filter(converged, !is.na(risk_diff),
+         !estimand %in% c("treatment_policy", "no_switch")) %>%
+  mutate(estimand_label = estimand_labels[estimand])
+
+truth_supp <- tibble(
+  estimand_label = unname(estimand_labels[c("while_on_treatment", "composite",
+                                             "principal_stratum")]),
+  xint = c(truth_all$while_on_treatment$true_rd,
+           truth_all$composite$true_rd,
+           truth_all$principal_stratum$true_rd))
+
+if (nrow(sim_plot_supp) > 0) {
+  ggplot(sim_plot_supp, aes(x = risk_diff, fill = method)) +
+    geom_histogram(alpha = 0.6, bins = 15, position = "identity") +
+    facet_wrap(~ estimand_label, scales = "free_x") +
+    geom_vline(data = truth_supp,
+               aes(xintercept = xint), linetype = "dashed", color = "red") +
+    labs(x = "Risk difference", y = "Count", fill = "Estimator") +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "bottom")
+}
+```
+
+## Discussion
+
+The most striking finding is on the scale Cox regression has traditionally claimed as its own: across 60 simulation iterations, the Cox HR confidence interval contained the true marginal hazard ratio in only 10% of iterations for the baseline-treatment analysis and 0% of iterations for the censor-at-switch and IPCW analyses. These are not wide confidence intervals that happen to miss the truth---they are narrow intervals that confidently exclude it. The Cox HR is not a parameter on a different scale from the risk difference; under confounding and non-proportional hazards, it fails to recover the correct marginal HR at all.
+
+The simulation illustrates three distinct sources of estimand--estimator mismatch in the presence of informative switching.
+
+### The hazard ratio does not answer the risk question
+
+The Cox model's conditional HR and the marginal risk difference are fundamentally different parameters. Under the simulation DGP (HR~early~ = 2.0 before day 90, HR~late~ = 0.90 after; ~11% switching; ~16% event rate at 180 days), the adjusted Cox naive HR of 1.60 suggests a 60% increase in the hazard of renal failure. The true marginal hazard ratio, however, is 1.36, and the adjusted Cox HR confidence interval contains this truth in only 10% of simulation iterations. The Cox model does not merely report a parameter on a different scale than the RD---it fails to recover the correct marginal HR most of the time. The unadjusted KM risk difference from the same model is +10.0 percentage points, while the true marginal 180-day risk difference is only +7.1 percentage points (RD coverage: 48%). Both the HR and the KM-RD fail to target the correct causal quantity because the Cox model does not adequately adjust for confounding, and its conditional-HR target is not the marginal RD defined by the treatment-policy estimand [@stensrud2019; @martinussen2022; @chen2023]. LMTP targets the marginal risk difference directly and recovers the true treatment-policy RD with minimal bias (+0.077 estimated vs +0.071 true, 98% RD coverage across 60 iterations).
+
+### Estimand choice determines the answer
+
+The treatment-policy and no-switch estimands give meaningfully different answers from the same data. The treatment-policy RD is +7.1 percentage points: treatment causes early harm, but ~11% of active-arm patients switch to the comparator, partially mitigating accumulated risk. The no-switch RD is +9.1 percentage points: without the escape valve of switching, patients bear the full 180 days of elevated hazard. The 2 percentage-point gap between these two estimands---while more modest than would be observed under higher switching rates---demonstrates that the question being asked, not just the statistical method, determines the magnitude of the estimated treatment effect. All five estimand strategies (treatment-policy, no-switch, while-on-treatment, composite, and principal stratum) yield distinct true risk differences from the same underlying data-generating process.
+
+This divergence has direct regulatory implications. A treatment-policy analysis reports the harm observed in routine clinical practice where physicians switch patients who develop early renal signals. A no-switch analysis reveals the harm patients would face if switching were not available---a scenario relevant to drug approval decisions and settings where switching is constrained. The composite estimand (RD = +18.3 percentage points) is largest because switching itself counts as an event, conflating drug tolerability with drug safety.
+
+### Cox-based approaches for handling switching are limited
+
+Several Cox-based strategies are commonly used to adjust for treatment switching, each with structural limitations:
+
+- **Cox naive** (baseline treatment only) ignores switching entirely. Under treatment-policy, this is the correct Cox model for this estimand, but the conditional HR it targets does not correspond to the marginal RD. Under confounding, the KM risk difference from this model overestimates the true RD (+10.0% estimated vs +7.1% true; 48% RD coverage). The HR CI contains the true marginal HR in only 10% of iterations.
+
+- **Cox censor-at-switch** censors follow-up when patients switch. This is sometimes used to approximate a hypothetical or while-on-treatment analysis, but it assumes switching is non-informative given baseline covariates. In this DGP, CKD drives both switching (21% of active-arm CKD patients switch) and renal failure, so the assumption is violated. The censor-at-switch HR (1.78) is inflated because censoring selectively removes high-risk person-time from the active arm, yielding a KM-RD of +11.8% with 10% RD coverage and 0% HR coverage.
+
+- **Cox IPCW** (inverse probability of censoring weighting) attempts to correct the informative censoring bias by reweighting subjects who remain unswitched. With a simple subject-level logistic switching model, the IPCW HR (1.79) provides negligible improvement over the unadjusted censor-at-switch HR, with 8% RD coverage and 0% HR coverage. This illustrates a well-known limitation: IPCW is sensitive to correct specification of the censoring model, and a misspecified model can make estimation worse, not better.
+
+- **Cox time-dependent** includes current treatment status as a time-varying covariate. This does not correspond to a marginal risk contrast under any estimand strategy and requires the strong assumption of no unmeasured time-varying confounding of the switching decision.
+
+LMTP's advantage is structural: it directly targets the marginal risk difference for a specified estimand, handles informative switching through its treatment or censoring model (depending on the estimand), and provides double-robust inference. Across 60 production iterations, LMTP achieved 98% RD coverage on treatment-policy, 95% on composite, 95% on principal stratum oracle, 86% on no-switch, and 48% on the harder while-on-treatment estimand. Cox approaches, by contrast, achieved 8--52% RD coverage for treatment-policy and no-switch, 8% for while-on-treatment, and 0--10% HR coverage across most estimands---the HR CIs confidently report the wrong marginal quantity. Only for the composite estimand do Cox approaches achieve passable RD coverage (70--78%), reflecting that the composite absorbs switching into the outcome and therefore does not require switching adjustment.
+
+### Extension to other intercurrent events
+
+Treatment switching is one of several intercurrent events that complicate post-authorization safety analyses. The same estimand framework applies to other post-baseline events, each of which can be handled through the same five ICH E9(R1) strategies.
+
+**Informative censoring and loss to follow-up.** In administrative databases, patients may leave the data source (e.g., change insurance) for reasons related to their health status. If sicker patients are more likely to disenroll, loss to follow-up is informative. The treatment-policy approach follows all patients regardless; the hypothetical approach models a world without loss to follow-up; the while-on-treatment approach censors at disenrollment. In the LMTP framework, informative loss to follow-up enters through the censoring nodes (C columns), and the censoring model adjusts for the informative component — structurally identical to how switch-censoring is handled in the WOT analysis.
+
+**Informative monitoring.** In electronic health record data, outcome ascertainment depends on clinical encounters. Patients who are monitored more frequently have more opportunities for events to be detected. If monitoring frequency is driven by disease severity, it becomes a form of informative observation. The LMTP framework can model monitoring intensity as a time-varying covariate, with the censoring model adjusting for differential outcome ascertainment. In practice, this requires modelling the monitoring process jointly with the outcome.
+
+**Competing risks.** Death from causes unrelated to renal failure is a competing event that precludes the safety outcome. The ICH E9(R1) strategies apply: under a treatment-policy approach, the analysis must specify how death is handled — either as censoring (targeting a net risk) or as part of a composite endpoint; under a composite strategy, death is absorbed into the outcome; under a while-on-treatment approach, death could censor follow-up. The `concrete` R package [@rytgaard2023] implements continuous-time TMLE for cause-specific absolute risks with competing events, which avoids the time-discretisation required by LMTP but is currently restricted to baseline treatment interventions.
+
+**Multiple intercurrent events.** In practice, several intercurrent events may occur simultaneously — a patient may switch treatment, be lost to follow-up, and experience a competing death, each driven by a different set of time-varying confounders. The estimand framework requires specifying a strategy for *each* intercurrent event independently. The LMTP/TMLE framework can handle multiple intercurrent events by modelling each in the appropriate node: treatment changes in A columns, censoring events in C columns, and composite events in Y columns. The complexity of the analysis scales with the number of distinct mechanisms that must be modelled.
+
+### Data support and estimand feasibility
+
+Not all estimands are equally feasible in a given dataset. The positivity assumption---that the probability of each treatment assignment and censoring pattern remains bounded away from zero within every covariate stratum at every time point---varies in severity across the five strategies, and this variation should inform estimand selection in practice.
+
+The **treatment-policy** estimand has the weakest positivity requirements because it does not intervene on or censor at switching. It requires only that baseline treatment assignment has adequate support conditional on confounders---a standard condition shared with any confounding-adjusted analysis. Because treatment-policy does not model the post-baseline switching process, it avoids the sequential positivity requirements that burden other strategies.
+
+The **no-switch** (hypothetical) estimand has the most demanding positivity requirements. It requires that, at every time point and within every covariate stratum, there is a non-negligible probability that the patient remains on their assigned treatment. When switching is driven by clinical indicators---as in this simulation, where 21% of active-arm CKD patients switch by 180 days---the no-switch intervention requires LMTP to model a counterfactual that may be poorly supported in high-risk subgroups. In practice, this can manifest as unstable weights, wide confidence intervals, or residual bias. The support diagnostic figures in Section @sec-support illustrate this degradation under scenarios with progressively higher switching intensity.
+
+The **while-on-treatment** estimand faces a related but distinct challenge: the censoring model must be well-supported in subgroups where switching occurs. If CKD patients almost always switch, the censoring model must extrapolate the outcome distribution for CKD patients who do not switch---a group that may be vanishingly small in the data. The censoring-based approach is inherently more sensitive to positivity violations than the treatment-policy approach, though less demanding than the no-switch approach because it does not require modelling the counterfactual treatment trajectory.
+
+The **composite** estimand avoids positivity difficulties around switching entirely, because switching is absorbed into the outcome rather than modelled as a treatment or censoring mechanism. However, this advantage comes at the cost of clinical interpretability: the composite conflates switching (a treatment decision) with renal failure (a clinical outcome), making the resulting risk difference harder to communicate to clinical audiences.
+
+The **principal stratum** estimand sidesteps positivity by restricting to the latent subpopulation who would not switch under either treatment. This subpopulation has, by construction, no switching to model. However, it requires identification of the stratum itself, which in practice demands untestable structural assumptions (e.g., monotonicity of switching).
+
+These considerations suggest a practical hierarchy from most to least robust under data limitations:
+
+1. **Treatment-policy** — weakest positivity requirements; only needs baseline treatment support.
+2. **Composite** — sidesteps switching-positivity by absorbing switching into the outcome, at the cost of interpretability.
+3. **Principal stratum** (oracle) — avoids positivity on switching by restricting to a latent subgroup, but requires untestable structural assumptions for identification in practice.
+4. **While-on-treatment** — sensitive to positivity in the switcher subpopulations.
+5. **No-switch (hypothetical)** — most demanding; requires sequential positivity at every time point and covariate stratum.
+
+Analysts should evaluate positivity diagnostics---propensity score distributions, switching rates by covariate stratum, effective sample sizes after weighting---before committing to an estimand strategy. When switching rates exceed 40--50% in key subgroups, the no-switch estimand may be infeasible regardless of the estimator used, and the treatment-policy or composite estimand may be the only defensible choice.
+
+### Sensitivity to unmeasured confounding
+
+Causal interpretation of any observational estimate depends on the assumption of no unmeasured confounding. The causal gap $\delta = \psi_{\text{stat}} - \psi_{\text{causal}}$ quantifies the discrepancy between the statistical and causal estimands. The G-value [@gruber2024]---the smallest $\delta$ that would shift the confidence interval to include the null---provides a useful diagnostic. A full sensitivity analysis is not implemented here but would be a necessary component of any production analysis.
+
+## Limitations
+
+**DGP scope.** The treatment-policy and no-switch truths diverge by 2 percentage points under the simulation DGP (HR~early~ = 2.0, ~11% switching, +7.1% vs +9.1%). This gap is substantive but smaller than what would be observed in oncology crossover trials or other settings with high switching rates and large post-switch hazard changes. A sensitivity DGP with ~31% switching widened the gap to 6.5 percentage points; a systematic exploration of the divergence as a function of switching intensity and post-switch hazard change is beyond the scope of this paper.
+
+**While-on-treatment LMTP performance.** Across 60 iterations, the WOT LMTP estimator showed bias +0.036 (true RD = +0.064) and 48% coverage. This is the weakest-performing LMTP specification, reflecting the difficulty of modelling informative switch-censoring with a minimal learner library (`SL.mean`, `SL.glm`, `SL.bayesglm`) and only 2-fold cross-validation. A richer learner set (including `SL.glmnet` and `SL.ranger`) and more careful specification of the time-varying censoring process would likely improve performance; a sensitivity analysis with richer libraries is planned.
+
+**Composite estimand interpretability.** The composite outcome (renal failure or switching, whichever first) is straightforward to estimate---LMTP achieved bias +0.006 and 95% coverage---but its clinical interpretation is limited because it conflates drug tolerability (the decision to switch) with drug safety (the biological outcome of renal failure). The composite estimand should be reported alongside, not instead of, a safety-specific estimand.
+
+**Principal stratum identification.** The oracle principal stratum analysis in the simulation identifies never-switchers via paired potential switching outcomes under both treatments---a construction not available in practice. In real analyses, identification of the never-switcher stratum requires structural assumptions (e.g., monotonicity of switching) or sensitivity analysis. The observed-non-switcher approximation, which is available in practice, showed substantially higher bias (+0.042) and 40% coverage in our simulation because observed non-switching is a post-treatment variable rather than a baseline characteristic.
+
+**IPCW specification.** The IPCW Cox implementation uses a simple subject-level logistic switching model rather than a time-varying pooled logistic model. This limits its ability to adjust for the time-varying switching process and likely overstates the estimator's fragility; a production IPCW analysis would specify the time-varying censoring model with appropriate stabilised weights and could narrow the gap to LMTP on the WOT estimand.
+
+**Learner library and discretisation.** Biweekly time bins (13 time points over 180 days) and a minimal Super Learner library are used throughout. Finer discretisation and richer learners would likely reduce residual bias in the LMTP estimates, particularly for the WOT estimand where the censoring model is the bottleneck.
+
+## Conclusions
+
+Three recommendations follow from this simulation study:
+
+1. **Specify the estimand before choosing the estimator.** Each ICH E9(R1) strategy defines a different causal quantity, and we observed up to a 2 percentage-point divergence between treatment-policy and no-switch estimands from the same data at 11% switching, with much larger divergences achievable at higher switching rates. "Which analysis gives the right answer?" is not a meaningful question until the estimand is fixed.
+
+2. **If using Cox regression, do not interpret the HR as a marginal risk contrast.** Across all five estimands we examined, the Cox HR confidence interval contained the true marginal HR in fewer than 40% of iterations, and for the treatment-policy estimand---arguably the most common clinical-practice target---the HR coverage was 0--10%. Cox HR-based conclusions about switching-adjusted effects should be treated as a conditional within-model summary, not as an estimate of the marginal causal contrast the estimand framework defines.
+
+3. **Match the estimator to the estimand, and check positivity.** LMTP targets the marginal risk difference directly and achieved 86--98% RD coverage for four of five estimands. The while-on-treatment estimand remains sensitive to the specification of the censoring model and the richness of the learner library. More broadly, the no-switch estimand carries the strictest positivity requirements; when switching rates exceed ~40--50% in key subgroups, treatment-policy or composite may be the only feasible choices.
+
+### Extension to other intercurrent events
+
+The logic generalises beyond treatment switching. The estimand framework requires specifying a strategy---treatment-policy, hypothetical, while-on-treatment, composite, or principal stratum---for *each* intercurrent event in a study, and the estimator must adapt to each strategy. LMTP's framework accommodates these extensions directly: informative loss to follow-up enters as a censoring node with the censoring model adjusting for the informative component; informative monitoring can be modelled as a time-varying covariate jointly with the outcome; competing risks can be handled either as censoring (with an appropriate hypothetical estimand), as part of a composite, or via continuous-time methods such as the `concrete` package [@rytgaard2023]. In each case, the pattern established here holds: the Cox HR does not generally correspond to the marginal risk contrast the estimand defines, conventional Cox-based switching adjustments (such as censor-at-switch or simple IPCW) can amplify rather than remove bias when the adjustment model is misspecified, and estimand-aligned approaches such as LMTP and TMLE target the marginal quantity directly but depend on adequate positivity and model specification.
+
+Applied analysts facing post-authorization safety questions should therefore treat the sequence of decisions---(1) articulate the causal question, (2) select an estimand strategy for each intercurrent event, (3) assess identifiability and positivity, (4) choose an estimator that targets the resulting parameter---as the core of the analysis, not as preamble to the regression model. The choice of regression model is the smaller decision; the scientific decisions that precede it determine what the regression is estimating in the first place.
+
+## References
+
+::: {#refs}
+:::
