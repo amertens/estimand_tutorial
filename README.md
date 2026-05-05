@@ -52,7 +52,7 @@ Rscript R/run_sim_test.R
 
 ### 3. (Optional) WOT sensitivity to learner library
 ```r
-# 15 iterations × 4 SL configs, parallel on 4 cores. ~1-2 hours.
+# 20 iterations × 4 SL configs, parallel on 4 cores. ~1-2 hours.
 Rscript R/run_wot_rich.R
 ```
 

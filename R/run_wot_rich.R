@@ -30,9 +30,9 @@ source(here("calc_truth.R"))
 
 tau <- 180
 BIN_WIDTH <- 14
-N_ITER <- 15
+N_ITER <- 20
 SAMPLE_SIZE <- 10000
-N_CORES <- 4  # Fewer cores because richer learners use more memory
+N_CORES <- 2  # Reduced from 4: SL.ranger + SL.glmnet on N=10k blew RAM with 4 workers
 
 requireNamespace("lmtp", quietly = TRUE)
 requireNamespace("SuperLearner", quietly = TRUE)
@@ -69,7 +69,8 @@ run_one_iter <- function(i, sl_configs, dgp_args, tau, bin_width, sample_size) {
     cfg <- sl_configs[[sl_name]]
     rd <- tryCatch(suppressWarnings({
       prep <- prepare_lmtp_data(dat, tau = tau, bin_width = bin_width,
-                                time_varying_trt = FALSE, censor_at_switch = TRUE)
+                                time_varying_trt = FALSE,
+                                competing_risk_at_switch = TRUE)
       fit <- run_lmtp_analysis(prep, folds = cfg$folds, learners = cfg$learners)
       rd_obj <- fit$contrast_rd
       rd_s <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$estimate

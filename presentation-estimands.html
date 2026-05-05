@@ -10,7 +10,7 @@
   <meta name="generator" content="quarto-1.6.42">
 
   <meta name="author" content="Joy Nakato">
-  <meta name="dcterms.date" content="2026-04-16">
+  <meta name="dcterms.date" content="2026-04-29">
   <title>Estimand–Estimator Alignment in Post-Authorization Safety Analyses</title>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -142,7 +142,7 @@ Joy Nakato
     </div>
 </div>
 
-  <p class="date">2026-04-16</p>
+  <p class="date">2026-04-29</p>
 </section>
 <section id="the-problem" class="slide level2 smaller">
 <h2>The problem</h2>
@@ -219,7 +219,7 @@ Joy Nakato
 <h2>The causal roadmap</h2>
 <p>The analysis should proceed through a structured sequence, not jump directly to a regression model.</p>
 
-<img data-src="presentation-estimands_files/figure-revealjs/fig-roadmap-1.png" id="fig-roadmap" width="2200" class="r-stretch quarto-figure-center"><p class="caption">
+<img data-src="presentation-estimands_files/figure-revealjs/fig-roadmap-1.png" id="fig-roadmap" class="r-stretch quarto-figure-center"><p class="caption">
 Figure&nbsp;1
 </p><div class="fragment">
 <blockquote>
@@ -243,7 +243,7 @@ Figure&nbsp;1
 <section id="causal-structure" class="slide level2 smaller">
 <h2>Causal structure</h2>
 
-<img data-src="presentation-estimands_files/figure-revealjs/fig-dag-1.png" id="fig-dag" width="2000" class="r-stretch quarto-figure-center"><p class="caption">
+<img data-src="presentation-estimands_files/figure-revealjs/fig-dag-1.png" id="fig-dag" class="r-stretch quarto-figure-center"><p class="caption">
 Figure&nbsp;2
 </p><aside class="notes">
 <p>Key: W (especially CKD) is a common cause of treatment assignment, switching, kidney function, and AKI. Switching is driven by evolving kidney function, making it informative. Conditioning on post-treatment variables (switching, censoring) without adjustment can open collider paths.</p>
@@ -265,9 +265,9 @@ Figure&nbsp;2
 <div>
 <p><strong>1. Treatment-policy</strong> | Follow all patients regardless of switching | <em>Real-world effect of initiating treatment, including downstream switching</em></p>
 <p><strong>2. Hypothetical no-switch</strong> | Model / intervene to prevent switching | <em>Effect if no patient could switch — isolates the direct pharmacological effect</em></p>
-<p><strong>3. While-on-treatment</strong> | Switching treated as censoring event | <em>180-day risk with follow-up censored at switch; LMTP censoring model adjusts for informative switching</em></p>
+<p><strong>3. While-on-treatment</strong> | Switching treated as a censoring event | <em>Effect of the drug before switching — 180-day risk with follow-up truncated at switch; LMTP censoring model adjusts for informative switching</em></p>
 <p><strong>4. Composite</strong> | Absorb switching into the outcome | <em>Risk of renal failure OR switching — conflates tolerability with safety</em></p>
-<p><strong>5. Principal stratum</strong> | Restrict to latent never-switchers | <em>Effect among patients who would not switch under either treatment; oracle analysis in simulation</em></p>
+<p><strong>5. Principal stratum</strong> | Restrict to latent never-switchers | <em>Effect among patients who would not switch under <strong>either</strong> drug — a strong cross-world assumption; only observable approximation is non-switchers under their observed treatment</em></p>
 </div>
 <div class="fragment">
 <p>Each answers a <strong>different clinical question</strong>. Choosing among them is a scientific decision, not a statistical one.</p>
@@ -288,12 +288,12 @@ Figure&nbsp;2
 </section>
 <section id="true-effects-differ-across-estimands" class="slide level2 smaller">
 <h2>True effects differ across estimands</h2>
-<p>Under the simulation DGP, the same drug produces different risk differences depending on the estimand strategy.</p>
+<p>Under the simulation DGP, the same drug produces different relative risks depending on the estimand strategy.</p>
 
-<img data-src="presentation-estimands_files/figure-revealjs/fig-truth-1.png" id="fig-truth" width="1800" class="r-stretch quarto-figure-center"><p class="caption">
+<img data-src="presentation-estimands_files/figure-revealjs/fig-truth-1.png" id="fig-truth" class="r-stretch quarto-figure-center"><p class="caption">
 Figure&nbsp;3
 </p><aside class="notes">
-<p>The composite RD is large — dominated by differential switching rates, not renal failure. TP (+7.1%) and NS (+9.1%) differ by 2 percentage points because ~11% of patients switch, partially mitigating early harm. WOT truth (+6.4%) is the 180-day risk under follow-up truncated at switching. Principal stratum (+9.0%) restricts to oracle never-switchers (~19% of population). The core teaching point: the treatment effect has no single value without specifying the estimand.</p>
+<p>Strategies are ordered to match the headline coverage table. The composite RR (1.46) is the largest because differential switching rates inflate the composite endpoint. Treatment-policy (1.25), no-switch (1.34), while-on-treatment (1.26), and principal stratum (1.35) differ because each defines a different counterfactual contrast. This relative ordering is DGP-specific — under different switching dynamics the WOT effect can be the largest.</p>
 <style type="text/css">
         span.MJX_Assistive_MathML {
           position:absolute!important;
@@ -320,10 +320,10 @@ Figure&nbsp;3
 </div><div class="column" style="width:45%;">
 <div class="cell">
 <div class="cell-output-display">
-<div id="fig-cox-riskset" class="quarto-float quarto-figure quarto-figure-center" width="1000">
+<div id="fig-cox-riskset" class="quarto-float quarto-figure quarto-figure-center" width="75%">
 <figure class="quarto-float quarto-float-fig">
 <div aria-describedby="fig-cox-riskset-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-<img data-src="presentation-estimands_files/figure-revealjs/fig-cox-riskset-1.png" id="fig-cox-riskset" width="1000">
+<img data-src="presentation-estimands_files/figure-revealjs/fig-cox-riskset-1.png" id="fig-cox-riskset" style="width:75.0%">
 </div>
 <figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig quarto-uncaptioned" id="fig-cox-riskset-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 Figure&nbsp;4
@@ -390,20 +390,16 @@ Figure&nbsp;4
 </thead>
 <tbody>
 <tr class="odd">
-<td>LMTP / SDR</td>
-<td>Marginal risk under specified intervention</td>
-</tr>
-<tr class="even">
-<td>TMLE</td>
-<td>Marginal risk under specified intervention</td>
-</tr>
-<tr class="odd">
 <td>G-computation</td>
 <td>Marginal risk (requires correct outcome model)</td>
 </tr>
 <tr class="even">
-<td>IPCW</td>
+<td>IPTW</td>
 <td>Marginal risk (requires correct weight model)</td>
+</tr>
+<tr class="odd">
+<td>L-TMLE</td>
+<td>Marginal risk under specified intervention</td>
 </tr>
 </tbody>
 </table>
@@ -431,7 +427,7 @@ Figure&nbsp;4
 <section id="simulation-design" class="slide level2 smaller">
 <h2>Simulation design</h2>
 
-<img data-src="presentation-estimands_files/figure-revealjs/fig-simdesign-1.png" id="fig-simdesign" width="2000" class="r-stretch quarto-figure-center"><p class="caption">
+<img data-src="presentation-estimands_files/figure-revealjs/fig-simdesign-1.png" id="fig-simdesign" class="r-stretch quarto-figure-center"><p class="caption">
 Figure&nbsp;5
 </p><aside class="notes">
 <p>The DGP uses HR=2.0 (early) and HR=0.90 (late) with ~16% event rate and ~11% switching. Treatment assignment is confounded by CKD, cirrhosis, and age. Switching is driven by treatment and CKD, making it informative. The non-proportional hazard structure means any single HR is a time-averaged summary.</p>
@@ -560,10 +556,10 @@ Table&nbsp;1: Estimates from a single simulated dataset (N = 10,000)
 <section id="repeated-simulation-results" class="slide level2 smaller">
 <h2>Repeated simulation results</h2>
 
-<img data-src="presentation-estimands_files/figure-revealjs/fig-sim-results-1.png" id="fig-sim-results" width="2000" class="r-stretch quarto-figure-center"><p class="caption">
+<img data-src="presentation-estimands_files/figure-revealjs/fig-sim-results-1.png" id="fig-sim-results" class="r-stretch quarto-figure-center"><p class="caption">
 Figure&nbsp;6
 </p><aside class="notes">
-<p>This slide loads from cached simulation results (60-iteration production cache). The simulation compares four estimators: Cox naive, Cox censor-at-switch, Cox IPCW, and LMTP SDR. Production findings: LMTP achieves 98% RD coverage on treatment-policy, 95% on composite, 95% on principal stratum oracle, 86% on no-switch, and 48% on while-on-treatment. Cox methods achieve 8–52% RD coverage across estimands and 0–10% HR coverage across most estimands—their HR CIs confidently report the wrong marginal quantity. DGP: HR_early=2.0, HR_late=0.90, ~11% switching, ~16% event rate, ~19% never-switchers.</p>
+<p>This slide loads from cached simulation results (200-iteration production cache, sim_study_main.rds). The simulation compares Cox naive, Cox censor-at-switch, Cox IPCW, and estimand-specific LMTP SDR fits. DGP: HR_early=2.0, HR_late=0.90, ~11% switching, ~16% event rate, ~19% never-switchers.</p>
 <style type="text/css">
         span.MJX_Assistive_MathML {
           position:absolute!important;
@@ -578,63 +574,89 @@ Figure&nbsp;6
 </section>
 <section id="headline-findings-coverage-by-estimator-and-estimand" class="slide level2 smaller">
 <h2>Headline findings: coverage by estimator and estimand</h2>
-<p>Across 60 iterations (N = 10,000 each), the production simulation yielded:</p>
-<table class="caption-top">
+<div class="cell" data-cache.extra="&quot;2026-04-28 06:10:09&quot;">
+<div id="tbl-headline-coverage" class="cell quarto-float quarto-figure quarto-figure-center" data-cache.extra="&quot;2026-04-28 06:10:09&quot;">
+<figure class="quarto-float quarto-float-tbl">
+<figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-headline-coverage-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+Table&nbsp;2: Coverage of 95% CIs across 200 simulated datasets (N = 10,000 each)
+</figcaption>
+<div aria-describedby="tbl-headline-coverage-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
+<div class="cell-output-display">
+<table class="do-not-create-environment cell caption-top">
 <colgroup>
-<col style="width: 25%">
-<col style="width: 25%">
-<col style="width: 25%">
-<col style="width: 25%">
+<col style="width: 19%">
+<col style="width: 8%">
+<col style="width: 8%">
+<col style="width: 17%">
+<col style="width: 17%">
+<col style="width: 30%">
 </colgroup>
 <thead>
 <tr class="header">
-<th>Estimand</th>
-<th>LMTP RD cov.</th>
-<th>Cox RD cov. (best)</th>
-<th>Cox HR cov. (best)</th>
+<th style="text-align: left;">Estimand</th>
+<th style="text-align: left;">True RR</th>
+<th style="text-align: left;">True HR</th>
+<th style="text-align: left;">LMTP RD coverage</th>
+<th style="text-align: left;">LMTP RR coverage</th>
+<th style="text-align: left;">Aligned Cox HR coverage</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>Treatment-policy</td>
-<td><strong>98%</strong></td>
-<td>48% (naive)</td>
-<td>10% (naive)</td>
+<td style="text-align: left;">Treatment-policy</td>
+<td style="text-align: left;">1.25</td>
+<td style="text-align: left;">1.36</td>
+<td style="text-align: left;">94%</td>
+<td style="text-align: left;">93%</td>
+<td style="text-align: left;">12% (naive on full follow-up)</td>
 </tr>
 <tr class="even">
-<td>No-switch</td>
-<td><strong>86%</strong></td>
-<td>52%</td>
-<td>8%</td>
+<td style="text-align: left;">No-switch</td>
+<td style="text-align: left;">1.34</td>
+<td style="text-align: left;">1.48</td>
+<td style="text-align: left;">87%</td>
+<td style="text-align: left;">87%</td>
+<td style="text-align: left;">8% (IPCW for switching)</td>
 </tr>
 <tr class="odd">
-<td>While-on-treatment</td>
-<td>48%</td>
-<td>8%</td>
-<td>7%</td>
+<td style="text-align: left;">While-on-treatment</td>
+<td style="text-align: left;">1.26</td>
+<td style="text-align: left;">1.51</td>
+<td style="text-align: left;">93%</td>
+<td style="text-align: left;">94%</td>
+<td style="text-align: left;">14% (censor at switch)</td>
 </tr>
 <tr class="even">
-<td>Composite</td>
-<td><strong>95%</strong></td>
-<td>78% (IPCW)</td>
-<td>38%</td>
+<td style="text-align: left;">Composite</td>
+<td style="text-align: left;">1.46</td>
+<td style="text-align: left;">1.77</td>
+<td style="text-align: left;">96%</td>
+<td style="text-align: left;">96%</td>
+<td style="text-align: left;">38% (naive on full follow-up)</td>
 </tr>
 <tr class="odd">
-<td>Principal stratum (oracle)</td>
-<td><strong>95%</strong></td>
-<td>97% (naive, see below)</td>
-<td>60% (naive)</td>
+<td style="text-align: left;">Principal stratum</td>
+<td style="text-align: left;">1.35</td>
+<td style="text-align: left;">1.48</td>
+<td style="text-align: left;">96%</td>
+<td style="text-align: left;">98%</td>
+<td style="text-align: left;">62% (naive on full follow-up)</td>
 </tr>
 </tbody>
 </table>
+</div>
+</div>
+</figure>
+</div>
+</div>
 <div class="fragment">
 <p>Two findings deserve emphasis:</p>
 <ul>
-<li><strong>Cox HR confidence intervals confidently exclude the true marginal HR.</strong> For treatment-policy, HR coverage was 10% (naive) and 0% (censor-at-switch, IPCW). These are narrow intervals that miss the truth.</li>
-<li><strong>Cox naive on principal stratum is not a coincidence.</strong> Under the mild switching selection in this DGP, the never-switcher subpopulation is structurally similar to the overall cohort. Under stronger selection, Cox naive would overestimate the PS risk difference just as it does for the other estimands.</li>
+<li><strong>LMTP achieves near-nominal coverage on both the RD and RR scales</strong> for every estimand it directly targets — including while-on-treatment once treatment is included as a (discretized) time-varying node in the LMTP fit.</li>
+<li><strong>Cox HR confidence intervals confidently exclude the true marginal HR.</strong> For the treatment-policy estimand HR coverage is effectively 0%; the only setting where Cox HR coverage approaches nominal is the principal-stratum oracle, where the never-switcher subgroup happens to resemble the overall cohort under this DGP.</li>
 </ul>
 <aside class="notes">
-<p>The HR coverage finding is the most striking quantitative result. Emphasize that “0% coverage” is not a wide-CI-miss but a confident wrong answer. The PS-via-Cox finding is a teaching point: don’t interpret Cox’s good PS performance as a general property of the estimator.</p>
+<p>The HR coverage finding is the most striking quantitative result. “0% coverage” is not a wide-CI-miss but a confident wrong answer. The PS-via-Cox finding is a teaching point — under stronger informative switching the Cox HR would also miss on the principal stratum. The relative ordering of true RDs across estimands is DGP-specific: in other scenarios the while-on-treatment effect can be the largest. WOT performance improved markedly after fitting the LMTP treatment node and discretizing baseline treatment, addressing the time-varying-treatment concern raised by Joy and Nick.</p>
 <style type="text/css">
         span.MJX_Assistive_MathML {
           position:absolute!important;
@@ -699,7 +721,7 @@ Figure&nbsp;6
 <h2>Positivity and support</h2>
 <p>Even an aligned estimator fails when the data do not support the target intervention.</p>
 
-<img data-src="presentation-estimands_files/figure-revealjs/fig-support-1.png" id="fig-support" width="2000" class="r-stretch quarto-figure-center"><p class="caption">
+<img data-src="presentation-estimands_files/figure-revealjs/fig-support-1.png" id="fig-support" class="r-stretch quarto-figure-center"><p class="caption">
 Figure&nbsp;7
 </p><aside class="notes">
 <p>Under poor support, CKD patients on the active drug switch near-deterministically. The censoring model must extrapolate heavily, and any estimator’s performance degrades. This is failure mode #3: right estimand, right estimator, but the data do not support the question.</p>
@@ -721,7 +743,7 @@ Figure&nbsp;7
 <div id="tbl-support-results" class="cell quarto-float quarto-figure quarto-figure-center">
 <figure class="quarto-float quarto-float-tbl">
 <figcaption class="quarto-float-caption-top quarto-float-caption quarto-float-tbl" id="tbl-support-results-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-Table&nbsp;2: Estimation results across support scenarios (N = 5,000)
+Table&nbsp;3: Estimation results across support scenarios (N = 5,000)
 </figcaption>
 <div aria-describedby="tbl-support-results-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 <div class="cell-output-display">
@@ -737,21 +759,21 @@ Table&nbsp;2: Estimation results across support scenarios (N = 5,000)
 <tbody>
 <tr class="odd">
 <td style="text-align: left;">Good support</td>
-<td style="text-align: right;">1.380</td>
-<td style="text-align: right;">1.460</td>
-<td style="text-align: right;">-0.095</td>
+<td style="text-align: right;">1.489</td>
+<td style="text-align: right;">1.712</td>
+<td style="text-align: right;">-0.048</td>
 </tr>
 <tr class="even">
 <td style="text-align: left;">Strained support</td>
-<td style="text-align: right;">1.168</td>
-<td style="text-align: right;">1.371</td>
-<td style="text-align: right;">2.180</td>
+<td style="text-align: right;">1.350</td>
+<td style="text-align: right;">1.777</td>
+<td style="text-align: right;">-0.044</td>
 </tr>
 <tr class="odd">
 <td style="text-align: left;">Poor support</td>
-<td style="text-align: right;">1.301</td>
-<td style="text-align: right;">2.260</td>
-<td style="text-align: right;">-0.697</td>
+<td style="text-align: right;">0.875</td>
+<td style="text-align: right;">1.901</td>
+<td style="text-align: right;">0.039</td>
 </tr>
 </tbody>
 </table>
@@ -806,22 +828,99 @@ Table&nbsp;2: Estimation results across support scenarios (N = 5,000)
 </ul>
 </div></div>
 </section>
+<section id="which-estimand-to-use" class="slide level2 smaller">
+<h2>Which estimand to use?</h2>
+<p>A practical hierarchy from <strong>most to least feasible</strong> under data limitations, distilled from the manuscript:</p>
+<div style="font-size: 0.78em;">
+<table class="caption-top">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Rank</th>
+<th>Estimand</th>
+<th>When it’s the right pick</th>
+<th>Caveat</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td><strong>Treatment-policy</strong></td>
+<td>Default for safety; reflects observed practice; only needs baseline-treatment positivity</td>
+<td>Real-world effect including downstream switching — not a pure pharmacological signal</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td><strong>While-on-treatment</strong> (competing-risks)</td>
+<td>Want a descriptive cause-specific 180-day risk; same positivity as TP</td>
+<td>Switching is absorbed into the outcome definition, not an intervention</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td><strong>Composite</strong></td>
+<td>Switching positivity fails but a single combined endpoint is acceptable</td>
+<td>Conflates tolerability (switching) with safety (renal failure) — hard to communicate</td>
+</tr>
+<tr class="even">
+<td>4</td>
+<td><strong>Principal stratum</strong></td>
+<td>Want effect among “always-treated”; tolerable in adherence / mediation framings</td>
+<td>Requires strong cross-world + monotonicity assumptions; the observable approximation had only 49% RD coverage</td>
+</tr>
+<tr class="odd">
+<td>5</td>
+<td><strong>No-switch</strong> (hypothetical)</td>
+<td>Pure pharmacological effect needed and switching is rare / well-modelled</td>
+<td>Most demanding sequential positivity; coverage drops to 87% even at 11% switching — consider a <strong>stochastic intervention</strong> (“reduce switching by 50%”) instead when switching exceeds ~40–50%</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="fragment">
+<p><strong>Three rules that fall out of the simulation:</strong></p>
+<ul>
+<li><em>Specify the estimand before the estimator</em> — the same data give 1.25–1.46 true RR depending on the strategy.</li>
+<li><em>If using Cox, do not interpret the HR as a marginal risk contrast</em>, and do not assume a Cox-derived RD rescues the analysis under non-proportional hazards.</li>
+<li><em>Match the estimator to the estimand and the truth used for validation</em> — most apparent “estimator failures” we caught were silent estimand mismatches.</li>
+</ul>
+<aside class="notes">
+<p>Anchor each row in a clinical scenario rather than reading verbatim. The 40–50% switching threshold for retiring the no-switch estimand comes from the manuscript’s positivity discussion. Stochastic interventions (Díaz/Hoffman LMTP, Rytgaard 2026 calibrated intensity-scaling) sit outside the ICH E9(R1) taxonomy but offer a route when deterministic regimes lack support.</p>
+<style type="text/css">
+        span.MJX_Assistive_MathML {
+          position:absolute!important;
+          clip: rect(1px, 1px, 1px, 1px);
+          padding: 1px 0 0 0!important;
+          border: 0!important;
+          height: 1px!important;
+          width: 1px!important;
+          overflow: hidden!important;
+          display:block!important;
+      }</style></aside>
+</div>
+</section>
 <section id="conclusions" class="slide level2 smaller">
 <h2>Conclusions</h2>
 <div class="columns">
 <div class="column" style="width:60%;">
-<p><strong>Different estimands answer different questions.</strong> Under the simulation DGP, the same data yielded true risk differences from +6.4% (WOT) to +18.3% (composite), a range that depends entirely on how switching is handled.</p>
-<p><strong>Cox hazard ratios do not target the estimand.</strong> Across most estimand × estimator combinations, the Cox HR confidence interval contained the true marginal HR less than 40% of the time — and in the headline treatment-policy case, fewer than 10%.</p>
-<p><strong>LMTP targets the marginal risk difference directly.</strong> Near-nominal coverage (95–98%) for four of five estimands, with the while-on-treatment estimand the remaining weak spot (48%) due to censoring-model specification.</p>
-<p><strong>Diagnostics are not optional.</strong> Identification does not guarantee estimation. Positivity and support should be assessed before interpreting any causal estimate, and the estimand hierarchy (TP most robust → NS most demanding) should inform estimand selection.</p>
+<p><strong>Different estimands answer different questions.</strong> Under this DGP the true risk differences ranged from +6.4% (WOT) to +18.3% (composite); under a different scenario the relative ordering can change entirely.</p>
+<p><strong>The ICH E9(R1) strategies are one component of an estimand</strong>, not the full definition — population, time horizon, and outcome must also be specified.</p>
+<p><strong>Cox hazard ratios do not target the estimand.</strong> For treatment-policy, no-switch, and while-on-treatment, the Cox HR 95% CI contained the true marginal HR less than 15% of the time.</p>
+<p><strong>LMTP targets the marginal risk contrast directly.</strong> Near-nominal RD and RR coverage (87–96%) across all five estimands once the treatment node is included in the LMTP specification.</p>
+<p><strong>Stochastic and realistic interventions are a natural next step</strong> when strict deterministic interventions (e.g., “no one switches”) lack data support.</p>
+<p><strong>Diagnostics are not optional.</strong> Identification does not guarantee estimation. Positivity should be assessed iteratively with estimand specification, before interpreting any causal estimate.</p>
 </div><div class="column" style="width:40%;">
 <p><strong>The causal roadmap:</strong></p>
 <div class="cell">
 <div class="cell-output-display">
-<div id="fig-roadmap-small" class="quarto-float quarto-figure quarto-figure-center" width="800">
+<div id="fig-roadmap-small" class="quarto-float quarto-figure quarto-figure-center">
 <figure class="quarto-float quarto-float-fig">
 <div aria-describedby="fig-roadmap-small-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
-<img data-src="presentation-estimands_files/figure-revealjs/fig-roadmap-small-1.png" id="fig-roadmap-small" width="800">
+<img data-src="presentation-estimands_files/figure-revealjs/fig-roadmap-small-1.png" id="fig-roadmap-small">
 </div>
 <figcaption class="quarto-float-caption-bottom quarto-float-caption quarto-float-fig quarto-uncaptioned" id="fig-roadmap-small-caption-0ceaefa1-69ba-4598-a22c-09a6ac19f8ca">
 Figure&nbsp;8

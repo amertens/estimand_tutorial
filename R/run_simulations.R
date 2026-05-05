@@ -1,20 +1,22 @@
 # run_simulations.R
-# Repeated simulation study comparing estimators under each DGP policy.
+# Repeated simulation study comparing estimators across the five
+# ICH E9(R1) estimand strategies.
 #
-# For each DGP policy (treatment_policy, no_switch, while_on_treatment,
-# composite, principal_stratum), data are generated and three estimators
-# are applied:
-#   1. Baseline-treatment Cox HR (ignores switching)
-#   2. Censor-at-switch Cox HR
-#   3. LMTP SDR (static baseline intervention)
+# Per iteration and estimand, the following methods are run:
+#   - Cox naive (KM RD + Cox g-comp RD)
+#   - Cox censor-at-switch (KM RD + Cox g-comp RD)
+#   - Cox IPCW (KM RD + Cox g-comp RD)
+#   - LMTP SDR (one fit; principal_stratum runs two fits, oracle + approx)
 #
-# The LMTP analysis uses the same static intervention specification for
-# most policies. For the principal stratum, it restricts to observed
-# non-switchers (an approximation). The composite LMTP is known to be
-# misspecified (the censoring model adjusts away switching, whereas the
-# composite counts it as an event).
-
-# TODO(Joy): fill in exact runtime notes after benchmarking.
+# Estimand-specific LMTP specifications:
+#   treatment_policy:   baseline-only treatment, no switch handling
+#   no_switch:          time-varying A_j, static intervention holds A constant
+#   while_on_treatment: baseline-only treatment, switching as a competing
+#                       event in the outcome (competing_risk_at_switch=TRUE);
+#                       targets the M1 / Rufibach cause-specific incidence.
+#   composite:          baseline-only treatment, composite outcome
+#   principal_stratum:  baseline-only treatment on (a) the oracle
+#                       never-switcher subset and (b) observed non-switchers.
 
 suppressPackageStartupMessages({
   library(dplyr)
@@ -43,7 +45,8 @@ N_CORES <- 8L
 run_one_iter <- function(i, estimand = "treatment_policy",
                          sample_size = 1000, tau = 180,
                          bin_width = 14,
-                         lmtp_learners = c("SL.mean", "SL.glm", "SL.bayesglm"),
+                         lmtp_learners = c("SL.mean", "SL.glm", "SL.bayesglm", "SL.glmnet", "SL.ranger"),
+                         lmtp_k = Inf,
                          run_lmtp = TRUE, run_cox_td = FALSE,
                          dgp_args = list()) {
   set.seed(1000 + i)
@@ -85,78 +88,73 @@ run_one_iter <- function(i, estimand = "treatment_policy",
 
   results <- list()
 
-  # Helper: build Cox result row with HR CI and bootstrap KM-RD CI
-  make_cox_row <- function(fit, dat_for_km, label, tau, weights = NULL) {
-    km  <- km_risk_at(fit$survfit, t = tau)
-    km_rr <- if (km$risk_ctrl > 0) km$risk_trt / km$risk_ctrl else NA_real_
-    # Bootstrap KM risk difference CI (200 replicates)
-    rd_ci <- boot_km_rd_ci(dat_for_km, t = tau, n_boot = 200, weights = weights)
+  # Helper: build Cox result row with HR + HR CI only.
+  # We deliberately do NOT report a Cox-derived risk difference. The
+  # unadjusted KM RD does not use the Cox fit at all (the Cox model
+  # contributes nothing beyond the HR), and the covariate-standardized
+  # Cox g-comp RD inherits the proportional-hazards assumption that
+  # the simulation DGP intentionally violates. Cox is judged on its
+  # native scale (HR vs true marginal HR); LMTP is judged on the
+  # risk-scale parameters (RD and RR) it natively targets.
+  make_cox_row <- function(fit, label) {
     data.frame(
-      method = label, hr = fit$hr,
-      hr_ci_low = fit$ci_low, hr_ci_high = fit$ci_high,
-      ci_low = rd_ci$rd_ci_low, ci_high = rd_ci$rd_ci_high,
-      risk_diff = km$risk_diff, risk_ratio = km_rr, converged = TRUE
+      method = label,
+      hr = fit$hr, hr_ci_low = fit$ci_low, hr_ci_high = fit$ci_high,
+      risk_diff = NA_real_, ci_low = NA_real_, ci_high = NA_real_,
+      risk_ratio = NA_real_, rr_ci_low = NA_real_, rr_ci_high = NA_real_,
+      converged = TRUE
     )
   }
 
   cox_fail <- function(label) {
-    data.frame(method = label, hr = NA,
-               hr_ci_low = NA, hr_ci_high = NA,
-               ci_low = NA, ci_high = NA,
-               risk_diff = NA, risk_ratio = NA, converged = FALSE)
+    data.frame(
+      method = label,
+      hr = NA_real_, hr_ci_low = NA_real_, hr_ci_high = NA_real_,
+      risk_diff = NA_real_, ci_low = NA_real_, ci_high = NA_real_,
+      risk_ratio = NA_real_, rr_ci_low = NA_real_, rr_ci_high = NA_real_,
+      converged = FALSE
+    )
   }
 
   # ── A. Naive Cox (ignores switching) ──
-  results[["cox_naive"]] <- tryCatch({
-    fit <- fit_cox_naive(dat_cox, tau = tau, covars = covars)
-    dat_km <- dat_cox %>%
-      mutate(time_use = pmin(follow_time, tau),
-             event_use = as.integer(event == 1 & follow_time <= tau))
-    make_cox_row(fit, dat_km, "Cox naive", tau)
-  }, error = function(e) cox_fail("Cox naive"))
+  # Cox is judged on its native scale: the HR. We do not report a
+  # Cox-derived risk difference; see make_cox_row() rationale above.
+  cox_naive_fit <- tryCatch(
+    fit_cox_naive(dat_cox, tau = tau, covars = covars),
+    error = function(e) NULL
+  )
+  results[["cox_naive"]] <- if (!is.null(cox_naive_fit)) {
+    make_cox_row(cox_naive_fit, "Cox naive")
+  } else cox_fail("Cox naive")
 
   # ── B. Cox censor at switch ──
-  results[["cox_censor"]] <- tryCatch({
-    fit <- fit_cox_censor_switch(dat_cox, tau = tau, covars = covars)
-    # Prepare censored-at-switch KM data for bootstrap
-    dat_cs <- dat_cox %>%
-      mutate(time_use = pmin(follow_time, tau),
-             event_use = as.integer(event == 1 & follow_time <= tau))
-    if ("switch_time" %in% names(dat_cs)) {
-      sw_b <- dat_cs$switched == 1 & dat_cs$switch_time < dat_cs$time_use
-      dat_cs$time_use[sw_b]  <- pmin(dat_cs$switch_time[sw_b], tau)
-      dat_cs$event_use[sw_b] <- 0L
-    }
-    make_cox_row(fit, dat_cs, "Cox censor-at-switch", tau)
-  }, error = function(e) cox_fail("Cox censor-at-switch"))
+  cox_cs_fit <- tryCatch(
+    fit_cox_censor_switch(dat_cox, tau = tau, covars = covars),
+    error = function(e) NULL
+  )
+  results[["cox_censor"]] <- if (!is.null(cox_cs_fit)) {
+    make_cox_row(cox_cs_fit, "Cox censor-at-switch")
+  } else cox_fail("Cox censor-at-switch")
 
   # ── C. Cox IPCW (censor at switch with inverse probability weights) ──
-  results[["cox_ipcw"]] <- tryCatch({
-    fit <- fit_cox_ipcw(dat_cox, tau = tau, covars = covars)
-    # For IPCW bootstrap, use the censored-at-switch data with IPCW weights
-    # Recompute the weights inline for the bootstrap data
-    dat_ipcw <- dat_cox %>%
-      mutate(time_use = pmin(follow_time, tau),
-             event_use = as.integer(event == 1 & follow_time <= tau),
-             sw_time = if ("switch_time" %in% names(.)) switch_time else Inf,
-             did_switch = as.integer(switched == 1 & sw_time < time_use))
-    dat_ipcw <- dat_ipcw %>%
-      mutate(time_use = ifelse(did_switch == 1, pmin(sw_time, tau), time_use),
-             event_use = ifelse(did_switch == 1, 0L, event_use))
-    # Extract weights from the fitted model if available
-    w <- if (!is.null(fit$model$weights)) fit$model$weights else NULL
-    make_cox_row(fit, dat_ipcw, "Cox IPCW", tau, weights = w)
-  }, error = function(e) cox_fail("Cox IPCW"))
+  cox_ipcw_fit <- tryCatch(
+    fit_cox_ipcw(dat_cox, tau = tau, covars = covars),
+    error = function(e) NULL
+  )
+  results[["cox_ipcw"]] <- if (!is.null(cox_ipcw_fit)) {
+    make_cox_row(cox_ipcw_fit, "Cox IPCW")
+  } else cox_fail("Cox IPCW")
 
   # ── D. Cox time-dependent treatment (optional) ──
   if (run_cox_td) {
     results[["cox_td"]] <- tryCatch({
       fit <- fit_cox_td(dat_cox, tau = tau, covars = covars)
       data.frame(
-        method = "Cox time-dependent", hr = fit$hr,
-        hr_ci_low = fit$ci_low, hr_ci_high = fit$ci_high,
-        ci_low = NA_real_, ci_high = NA_real_,
-        risk_diff = NA_real_, risk_ratio = NA_real_, converged = TRUE
+        method = "Cox time-dependent",
+        hr = fit$hr, hr_ci_low = fit$ci_low, hr_ci_high = fit$ci_high,
+        risk_diff = NA_real_, ci_low = NA_real_, ci_high = NA_real_,
+        risk_ratio = NA_real_, rr_ci_low = NA_real_, rr_ci_high = NA_real_,
+        converged = TRUE
       )
     }, error = function(e) cox_fail("Cox time-dependent"))
   }
@@ -182,26 +180,41 @@ run_one_iter <- function(i, estimand = "treatment_policy",
   #   principal_stratum: BASELINE-ONLY on subsets of dat_raw.
   #     Never-switchers have constant A_j anyway.
 
-  # Helper to extract LMTP contrasts (handles old and new API)
-  # Note: lmtp_contrast(type="additive") returns S(1)-S(0) on the survival scale.
-  # Truth is computed as R(1)-R(0) = -(S(1)-S(0)). Negate to match risk scale.
+  lmtp_fail <- function(label) {
+    data.frame(
+      method = label,
+      hr = NA_real_, hr_ci_low = NA_real_, hr_ci_high = NA_real_,
+      risk_diff = NA_real_, ci_low = NA_real_, ci_high = NA_real_,
+      risk_ratio = NA_real_, rr_ci_low = NA_real_, rr_ci_high = NA_real_,
+      converged = FALSE
+    )
+  }
+
+  # Helper to extract LMTP contrasts.
+  # Note: lmtp_contrast(type = "additive") returns S(1) - S(0) on the
+  # survival scale. The risk-scale RD is R(1) - R(0) = -(S(1) - S(0)),
+  # so we negate the point estimate and swap the CI bounds.
+  # The risk-scale RR (R(1)/R(0)) and its CI are computed in
+  # run_lmtp_analysis via an EIF-based delta method (see helpers.R).
   extract_lmtp <- function(res, label) {
     rd_obj <- res$contrast_rd
-    rd_surv <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$estimate
-               else rd_obj$vals$theta
-    rd_se   <- if (!is.null(rd_obj$estimates)) rd_obj$estimates$std.error
-               else rd_obj$vals$std.error
-    # Convert from survival scale to risk scale
+    rd_surv <- (if (!is.null(rd_obj$estimates)) rd_obj$estimates$estimate
+                else rd_obj$vals$theta)
+    rd_se   <- (if (!is.null(rd_obj$estimates)) rd_obj$estimates$std.error
+                else rd_obj$vals$std.error)
     rd_est <- -rd_surv
-    rd_ci  <- -(rd_surv + c(1, -1) * 1.96 * rd_se)  # negate and swap bounds
-    rr_obj <- res$contrast_rr
-    rr_est <- if (!is.null(rr_obj$estimates)) rr_obj$estimates$estimate
-              else rr_obj$vals$theta
+    rd_ci  <- -(rd_surv + c(1, -1) * 1.96 * rd_se)
+
+    rr_est     <- res$rr
+    rr_ci_low  <- res$rr_ci_low
+    rr_ci_high <- res$rr_ci_high
+
     data.frame(
-      method = label, hr = NA_real_,
-      hr_ci_low = NA_real_, hr_ci_high = NA_real_,
-      ci_low = rd_ci[1], ci_high = rd_ci[2],
-      risk_diff = rd_est, risk_ratio = rr_est, converged = TRUE
+      method = label,
+      hr = NA_real_, hr_ci_low = NA_real_, hr_ci_high = NA_real_,
+      risk_diff = rd_est, ci_low = rd_ci[1], ci_high = rd_ci[2],
+      risk_ratio = rr_est, rr_ci_low = rr_ci_low, rr_ci_high = rr_ci_high,
+      converged = TRUE
     )
   }
 
@@ -215,12 +228,9 @@ run_one_iter <- function(i, estimand = "treatment_policy",
         if (n_events < 5) stop("Too few events: ", n_events)
         prep <- prepare_lmtp_data(dat_raw, tau = tau, bin_width = bin_width,
                                   time_varying_trt = FALSE)
-        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners, k = lmtp_k)
         extract_lmtp(res, "LMTP SDR")
-      }, error = function(e) {
-        data.frame(method = "LMTP SDR", hr = NA, hr_ci_low = NA, hr_ci_high = NA,
-                   ci_low = NA, ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
-      })
+      }, error = function(e) lmtp_fail("LMTP SDR"))
 
     } else if (estimand == "no_switch") {
       # ── Time-varying A_j on switching data: static intervention holds constant ──
@@ -229,29 +239,33 @@ run_one_iter <- function(i, estimand = "treatment_policy",
         if (n_events < 5) stop("Too few events: ", n_events)
         prep <- prepare_lmtp_data(dat_raw, tau = tau, bin_width = bin_width,
                                   time_varying_trt = TRUE)
-        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners, k = lmtp_k)
         extract_lmtp(res, "LMTP SDR (no-switch)")
-      }, error = function(e) {
-        data.frame(method = "LMTP SDR (no-switch)", hr = NA, hr_ci_low = NA, hr_ci_high = NA,
-                   ci_low = NA, ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
-      })
+      }, error = function(e) lmtp_fail("LMTP SDR (no-switch)"))
 
     } else if (estimand == "while_on_treatment") {
-      # ── Baseline-only treatment, switching as censoring ──
-      # WOT is a censor-at-switch estimand. Treatment stays baseline-only.
-      # Switching enters through the C columns (censor_at_switch=TRUE).
-      # The LMTP censoring model adjusts for informative switch-censoring.
+      # ── Baseline-only treatment, switching as a competing event ──
+      # WOT here is the M1 / Rufibach interpretation: the cause-specific
+      # cumulative incidence of the outcome before switching by tau, under
+      # an intervention on baseline treatment. Switching is absorbed into
+      # the outcome definition (Y locks at 0 once a subject switches
+      # without a prior event); only admin censoring before any switch
+      # contributes to the C nodes. This aligns the LMTP estimator with
+      # the truth in calc_truth.R::truth_while_on_treatment.
+      #
+      # Earlier iterations of this block used censor_at_switch = TRUE
+      # (Latimer / IPCW interpretation), which targets the no-switch
+      # counterfactual under non-informative censoring -- a different
+      # estimand from the truth. That mismatch produced the apparent
+      # +0.035 "bias" reported in earlier drafts; see Discussion.
       results[["lmtp"]] <- tryCatch({
         prep <- prepare_lmtp_data(dat_raw, tau = tau, bin_width = bin_width,
                                   time_varying_trt = FALSE,
-                                  censor_at_switch = TRUE)
+                                  competing_risk_at_switch = TRUE)
         n_events <- sum(prep$data$Y1 == 1, na.rm = TRUE)  # events in first bin
-        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners, k = lmtp_k)
         extract_lmtp(res, "LMTP SDR (WOT)")
-      }, error = function(e) {
-        data.frame(method = "LMTP SDR (WOT)", hr = NA, hr_ci_low = NA, hr_ci_high = NA,
-                   ci_low = NA, ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
-      })
+      }, error = function(e) lmtp_fail("LMTP SDR (WOT)"))
 
     } else if (estimand == "composite") {
       # ── Baseline-only treatment on composite-derived data ──
@@ -260,12 +274,9 @@ run_one_iter <- function(i, estimand = "treatment_policy",
         if (n_events < 5) stop("Too few events: ", n_events)
         prep <- prepare_lmtp_data(dat_cox, tau = tau, bin_width = bin_width,
                                   time_varying_trt = FALSE)
-        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners, k = lmtp_k)
         extract_lmtp(res, "LMTP SDR (composite)")
-      }, error = function(e) {
-        data.frame(method = "LMTP SDR (composite)", hr = NA, hr_ci_low = NA, hr_ci_high = NA,
-                   ci_low = NA, ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
-      })
+      }, error = function(e) lmtp_fail("LMTP SDR (composite)"))
 
     } else if (estimand == "principal_stratum") {
       # ── Oracle principal stratum (primary) ──
@@ -280,13 +291,10 @@ run_one_iter <- function(i, estimand = "treatment_policy",
             if (n_events < 5) stop("Too few events: ", n_events)
             prep <- prepare_lmtp_data(sub, tau = tau, bin_width = bin_width,
                                       time_varying_trt = FALSE)
-            res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+            res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners, k = lmtp_k)
             extract_lmtp(res, "LMTP SDR (oracle PS)")
           }),
-          error = function(e) {
-            data.frame(method = "LMTP SDR (oracle PS)", hr = NA, hr_ci_low = NA, hr_ci_high = NA,
-                       ci_low = NA, ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
-          }
+          error = function(e) lmtp_fail("LMTP SDR (oracle PS)")
         )
       }
 
@@ -297,12 +305,9 @@ run_one_iter <- function(i, estimand = "treatment_policy",
         if (n_events < 5) stop("Too few events: ", n_events)
         prep <- prepare_lmtp_data(sub, tau = tau, bin_width = bin_width,
                                   time_varying_trt = FALSE)
-        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners)
+        res  <- run_lmtp_analysis(prep, folds = 2, learners = lmtp_learners, k = lmtp_k)
         extract_lmtp(res, "LMTP SDR (obs. non-sw, approx)")
-      }, error = function(e) {
-        data.frame(method = "LMTP SDR (obs. non-sw, approx)", hr = NA, hr_ci_low = NA, hr_ci_high = NA,
-                   ci_low = NA, ci_high = NA, risk_diff = NA, risk_ratio = NA, converged = FALSE)
-      })
+      }, error = function(e) lmtp_fail("LMTP SDR (obs. non-sw, approx)"))
     }
   }
 
@@ -327,7 +332,8 @@ run_one_iter <- function(i, estimand = "treatment_policy",
 #' @return data.frame of aggregated results.
 run_simulation_study <- function(n_iter = 200, sample_size = 1000,
                                  tau = 180, bin_width = 14,
-                                 lmtp_learners = c("SL.mean", "SL.glm", "SL.bayesglm"),
+                                 lmtp_learners = c("SL.mean", "SL.glm", "SL.bayesglm", "SL.glmnet", "SL.ranger"),
+                                 lmtp_k = Inf,
                                  estimands = c("treatment_policy", "no_switch"),
                                  run_lmtp = TRUE, run_cox_td = FALSE,
                                  n_cores = N_CORES,
@@ -372,6 +378,7 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
         worker_args <- list(
           est = est, sample_size = sample_size, tau = tau,
           bin_width = bin_width, lmtp_learners = lmtp_learners,
+          lmtp_k = lmtp_k,
           run_lmtp = run_lmtp, run_cox_td = run_cox_td,
           dgp_args = dgp_args
         )
@@ -385,6 +392,7 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
             tau = worker_args$tau,
             bin_width = worker_args$bin_width,
             lmtp_learners = worker_args$lmtp_learners,
+            lmtp_k = worker_args$lmtp_k,
             run_lmtp = worker_args$run_lmtp,
             run_cox_td = worker_args$run_cox_td,
             dgp_args = worker_args$dgp_args
@@ -409,6 +417,7 @@ run_simulation_study <- function(n_iter = 200, sample_size = 1000,
             i, estimand = est, sample_size = sample_size,
             tau = tau, bin_width = bin_width,
             lmtp_learners = lmtp_learners,
+            lmtp_k = lmtp_k,
             run_lmtp = run_lmtp, run_cox_td = run_cox_td,
             dgp_args = dgp_args
           )
@@ -505,17 +514,23 @@ run_support_scenarios <- function(estimand = "treatment_policy",
 #' @return tibble with summary statistics grouped by estimand and method.
 summarize_simulation <- function(sim_results, truth_rd = NA, truth_rr = NA,
                                  truth_hr = NA) {
+  has_rr_ci <- all(c("rr_ci_low", "rr_ci_high") %in% names(sim_results))
+  has_hr_ci <- all(c("hr_ci_low", "hr_ci_high") %in% names(sim_results))
   sim_results %>%
     group_by(estimand, method) %>%
     summarise(
       n_iter       = n(),
       n_converged  = sum(converged, na.rm = TRUE),
-      # HR summaries (Cox methods)
+      # HR summaries (Cox methods only)
       mean_hr      = mean(hr, na.rm = TRUE),
       sd_hr        = sd(hr, na.rm = TRUE),
       bias_hr      = if (!is.na(truth_hr)) mean(hr, na.rm = TRUE) - truth_hr
                      else NA_real_,
-      # RD summaries (LMTP and KM-based)
+      coverage_hr  = if (!is.na(truth_hr) && has_hr_ci)
+                       mean(hr_ci_low <= truth_hr & hr_ci_high >= truth_hr,
+                            na.rm = TRUE)
+                     else NA_real_,
+      # RD summaries (LMTP only)
       mean_rd      = mean(risk_diff, na.rm = TRUE),
       emp_se_rd    = sd(risk_diff, na.rm = TRUE),
       bias_rd      = if (!is.na(truth_rd)) mean(risk_diff, na.rm = TRUE) - truth_rd
@@ -527,14 +542,14 @@ summarize_simulation <- function(sim_results, truth_rd = NA, truth_rr = NA,
                        mean(ci_low <= truth_rd & ci_high >= truth_rd,
                             na.rm = TRUE)
                      else NA_real_,
-      # HR coverage (Cox methods; requires hr_ci_low/hr_ci_high)
-      coverage_hr  = if (!is.na(truth_hr) && "hr_ci_low" %in% names(sim_results))
-                       mean(hr_ci_low <= truth_hr & hr_ci_high >= truth_hr,
-                            na.rm = TRUE)
-                     else NA_real_,
-      # RR summaries
+      # RR summaries (LMTP only; risk-scale RR with EIF-based delta-method CI)
       mean_rr      = mean(risk_ratio, na.rm = TRUE),
+      sd_rr        = sd(risk_ratio, na.rm = TRUE),
       bias_rr      = if (!is.na(truth_rr)) mean(risk_ratio, na.rm = TRUE) - truth_rr
+                     else NA_real_,
+      coverage_rr  = if (!is.na(truth_rr) && has_rr_ci)
+                       mean(rr_ci_low <= truth_rr & rr_ci_high >= truth_rr,
+                            na.rm = TRUE)
                      else NA_real_,
       .groups = "drop"
     )

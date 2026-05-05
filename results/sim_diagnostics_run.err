@@ -1,0 +1,24 @@
+Warning message:
+package 'ggplot2' was built under R version 4.4.3 
+── Attaching core tidyverse packages ──────────────────────── tidyverse 2.0.0 ──
+✔ forcats   1.0.0     ✔ readr     2.1.5
+✔ lubridate 1.9.3     ✔ stringr   1.6.0
+✔ purrr     1.0.2     ✔ tibble    3.2.1
+── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
+✖ dplyr::filter() masks stats::filter()
+✖ dplyr::lag()    masks stats::lag()
+ℹ Use the conflicted package (<http://conflicted.r-lib.org/>) to force all conflicts to become errors
+Warning message:
+package 'stringr' was built under R version 4.4.3 
+Running 20 diagnostic iterations...
+  done 10/20
+  done 20/20
+  done 30/50
+  done 40/50
+  done 50/50
+usable iterations: 50
+Wrote diagnostics to C:/Users/andre/OneDrive/Documents/estimand_tutorial/results/sim_diagnostics
+ring constant in:
+" risk",
+       title = ""
+Execution halted

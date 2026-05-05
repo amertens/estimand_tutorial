@@ -18,6 +18,7 @@ format:
     message: false
     warning: false
     fig-dpi: 200
+    fig-format: png
 execute:
   cache: true
 bibliography: []
@@ -225,11 +226,11 @@ The ICH E9(R1) addendum defines five strategies for handling the same intercurre
 
 **2. Hypothetical no-switch** | Model / intervene to prevent switching | *Effect if no patient could switch — isolates the direct pharmacological effect*
 
-**3. While-on-treatment** | Switching treated as censoring event | *180-day risk with follow-up censored at switch; LMTP censoring model adjusts for informative switching*
+**3. While-on-treatment** | Switching treated as a censoring event | *Effect of the drug before switching — 180-day risk with follow-up truncated at switch; L-TMLE censoring model adjusts for informative switching*
 
 **4. Composite** | Absorb switching into the outcome | *Risk of renal failure OR switching — conflates tolerability with safety*
 
-**5. Principal stratum** | Restrict to latent never-switchers | *Effect among patients who would not switch under either treatment; oracle analysis in simulation*
+**5. Principal stratum** | Restrict to latent never-switchers | *Effect among patients who would not switch under **either** drug — a strong cross-world assumption; only observable approximation is non-switchers under their observed treatment*
 
 :::
 
@@ -238,43 +239,51 @@ The ICH E9(R1) addendum defines five strategies for handling the same intercurre
 Each answers a **different clinical question**. Choosing among them is a scientific decision, not a statistical one.
 
 ::: {.notes}
-All five are implemented in the simulation with distinct LMTP specifications: baseline-only treatment (treatment-policy, composite, principal stratum), time-varying hold-constant (no-switch), and censoring-based (while-on-treatment). Principal stratum uses an oracle never-switcher indicator in simulation.
+All five are implemented in the simulation with distinct L-TMLE specifications: baseline-only treatment (treatment-policy, composite, principal stratum), time-varying hold-constant (no-switch), and competing-risks (while-on-treatment). Principal stratum uses an oracle never-switcher indicator in simulation.
 :::
 
 ## True effects differ across estimands {.smaller}
 
-Under the simulation DGP, the same drug produces different risk differences depending on the estimand strategy.
+Under the simulation DGP, the same drug produces different relative risks depending on the estimand strategy.
 
 ```{r}
 #| label: fig-truth
 #| fig-width: 9
-#| fig-height: 5
+#| fig-height: 7.5
 
 if (has_truth) {
   truth_df <- tibble(
     Strategy = c("Treatment-\npolicy", "No-switch\n(hypothetical)",
                  "While-on-\ntreatment", "Composite", "Principal\nstratum"),
-    RD = c(truth_all$treatment_policy$true_rd,
-           truth_all$no_switch$true_rd,
-           truth_all$while_on_treatment$true_rd,
-           truth_all$composite$true_rd,
-           truth_all$principal_stratum$true_rd),
-    Strategy_order = 1:5,
-    group = c("Main", "Main", "Main", "Supplementary", "Supplementary")
+    RR = c(truth_all$treatment_policy$true_rr,
+           truth_all$no_switch$true_rr,
+           truth_all$while_on_treatment$true_rr,
+           truth_all$composite$true_rr,
+           truth_all$principal_stratum$true_rr),
+    Strategy_order = 1:5
   ) %>%
     mutate(Strategy = fct_reorder(Strategy, Strategy_order))
 
-  ggplot(truth_df, aes(x = Strategy, y = RD, fill = group)) +
-    geom_col(width = 0.6, alpha = 0.85) +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
-    geom_text(aes(label = sprintf("%+.3f", RD)),
-              vjust = ifelse(truth_df$RD > 0, -0.5, 1.5), size = 4.5) +
-    scale_fill_manual(values = c("Main" = "steelblue", "Supplementary" = "grey60"),
-                      guide = "none") +
-    labs(x = NULL, y = "True 180-day risk difference",
-         title = "Same drug, different estimands, different answers",
-         subtitle = "Monte Carlo truth (N = 500,000 per arm)") +
-    coord_cartesian(ylim = c(-0.01, max(truth_df$RD) * 1.15))
+  estimand_pal <- c(
+    "Treatment-\npolicy"        = "#1E2761",
+    "No-switch\n(hypothetical)" = "#028090",
+    "While-on-\ntreatment"      = "#2C5F2D",
+    "Composite"                 = "#B85042",
+    "Principal\nstratum"        = "#6D2E46"
+  )
+
+  ggplot(truth_df, aes(x = Strategy, y = RR, color = Strategy)) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "grey40") +
+    geom_point(size = 10) +
+    geom_text(aes(label = sprintf("%.2f", RR)),
+              vjust = -1.5, size = 5, fontface = "bold", show.legend = FALSE) +
+    scale_color_manual(values = estimand_pal, guide = "none") +
+    labs(x = NULL, y = "True 180-day relative risk",
+         title = "True RR by ICE strategy") +
+    coord_cartesian(ylim = c(0.95, max(truth_df$RR) * 1.12)) +
+    theme(axis.text.x = element_text(size = 18, face = "bold"),
+          axis.text.y = element_text(size = 14),
+          axis.title.y = element_text(size = 16))
 } else {
   plot.new()
   text(0.5, 0.5, "Run R/run_cached_analyses.R to generate truth", cex = 1.5)
@@ -282,7 +291,7 @@ if (has_truth) {
 ```
 
 ::: {.notes}
-The composite RD is large — dominated by differential switching rates, not renal failure. TP (+7.1%) and NS (+9.1%) differ by 2 percentage points because ~11% of patients switch, partially mitigating early harm. WOT truth (+6.4%) is the 180-day risk under follow-up truncated at switching. Principal stratum (+9.0%) restricts to oracle never-switchers (~19% of population). The core teaching point: the treatment effect has no single value without specifying the estimand.
+Strategies are ordered to match the headline coverage table. The composite RR (1.46) is the largest because differential switching rates inflate the composite endpoint. Treatment-policy (1.25), no-switch (1.34), while-on-treatment (1.26), and principal stratum (1.35) differ because each defines a different counterfactual contrast. This relative ordering is DGP-specific — under different switching dynamics the WOT effect can be the largest.
 :::
 
 
@@ -303,8 +312,9 @@ Three issues compound:
 ::: {.column width="45%"}
 ```{r}
 #| label: fig-cox-riskset
-#| fig-width: 5
-#| fig-height: 4.5
+#| fig-width: 3.5
+#| fig-height: 3
+#| out-width: "75%"
 
 # Illustrate how censoring at switch distorts the risk set
 set.seed(42)
@@ -360,10 +370,9 @@ The estimator should follow from the estimand, not the reverse.
 
 | Method | Target |
 |---|---|
-| LMTP / SDR | Marginal risk under specified intervention |
-| TMLE | Marginal risk under specified intervention |
 | G-computation | Marginal risk (requires correct outcome model) |
-| IPCW | Marginal risk (requires correct weight model) |
+| IPTW | Marginal risk (requires correct weight model) |
+| L-TMLE | Marginal risk under specified intervention |
 
 All require specifying the intervention that defines the estimand.
 :::
@@ -439,7 +448,7 @@ Each simulated dataset is analysed with four estimators. We summarise performanc
 - True RD is known by Monte Carlo (N = 500,000 per arm)
 - **Bias** = mean estimate − truth
 - **RD coverage** = proportion of 95% CIs containing truth
-  - LMTP: analytic via efficient influence function
+  - L-TMLE: analytic via efficient influence function
   - Cox: bootstrap (200 replicates) on KM risk difference
 :::
 
@@ -448,7 +457,7 @@ Each simulated dataset is analysed with four estimators. We summarise performanc
 
 - True marginal HR from a Cox regression on counterfactual potential outcomes
 - **HR coverage** = proportion of Cox HR CIs containing the true marginal HR
-- LMTP does not target an HR; not evaluated on this scale
+- L-TMLE does not target an HR; not evaluated on this scale
 :::
 ::::
 
@@ -469,7 +478,7 @@ Bias on the HR scale is sensitive to the non-collapsibility of the HR; we focus 
 ```{r}
 #| label: tbl-single-dataset
 
-# Load cached LMTP results (no live simulation in the presentation)
+# Load cached L-TMLE results (no live simulation in the presentation)
 # Cox fits are fast enough to run inline
 set.seed(2026)
 dat <- generate_hep_data(N = 10000, h0 = 5e-3, HR_early = 2.0, HR_late = 0.90,
@@ -485,7 +494,7 @@ km_n   <- km_risk_at(cox_n$survfit, t = tau)
 km_cs  <- km_risk_at(cox_cs$survfit, t = tau)
 
 results_single <- tibble(
-  Analysis = c("Cox (baseline trt)", "Cox (censor at switch)", "LMTP SDR"),
+  Analysis = c("Cox (baseline trt)", "Cox (censor at switch)", "L-TMLE"),
   Scale = c("HR", "HR", "RD"),
   Estimate = c(round(cox_n$hr, 3), round(cox_cs$hr, 3),
                if (has_lmtp) round(-lmtp_res$contrast_rd$estimates$estimate, 4) else NA),
@@ -500,10 +509,10 @@ kable(results_single, format = "pipe",
 
 . . .
 
-The Cox HR and unadjusted KM risk difference reflect **confounding** — CKD patients are more likely to receive TDF *and* to develop renal failure. The LMTP risk difference is closer to the marginal truth but subject to finite-sample variability.
+The Cox HR and unadjusted KM risk difference reflect **confounding** — CKD patients are more likely to receive TDF *and* to develop renal failure. The L-TMLE risk difference is closer to the marginal truth but subject to finite-sample variability.
 
 ::: {.notes}
-Do not compare the Cox HR and LMTP RD as though they estimate the same quantity. The point is that they target different parameters, and the Cox analyses are further biased by confounding.
+Do not compare the Cox HR and L-TMLE RD as though they estimate the same quantity. The point is that they target different parameters, and the Cox analyses are further biased by confounding.
 :::
 
 
@@ -513,6 +522,7 @@ Do not compare the Cox HR and LMTP RD as though they estimate the same quantity.
 #| label: fig-sim-results
 #| fig-width: 10
 #| fig-height: 5
+#| cache.extra: !expr file.info(here::here("results", "sim_study_main.rds"))$mtime
 
 # Prefer production cache; fall back to test cache if production not yet complete
 sim_cache <- if (file.exists(here("results", "sim_study_main.rds"))) {
@@ -531,27 +541,51 @@ if (has_sim && has_truth) {
     no_switch = "No-switch"
   )
 
-  sim_plot <- sim_results %>%
-    filter(converged, !is.na(risk_diff),
-           estimand %in% c("treatment_policy", "no_switch")) %>%
-    mutate(estimand_label = estimand_labels[estimand])
+  est_keep <- c("treatment_policy", "no_switch")
+
+  lmtp_rr <- sim_results %>%
+    filter(converged, !is.na(risk_ratio),
+           estimand %in% est_keep,
+           method %in% c("LMTP SDR", "LMTP SDR (no-switch)")) %>%
+    transmute(estimand_label = estimand_labels[estimand],
+              Estimator = "L-TMLE",
+              metric = "Relative risk",
+              value  = risk_ratio)
+
+  cox_hr <- sim_results %>%
+    filter(converged, !is.na(hr),
+           estimand %in% est_keep,
+           method == "Cox naive") %>%
+    transmute(estimand_label = estimand_labels[estimand],
+              Estimator = "Cox (naive)",
+              metric = "Hazard ratio",
+              value  = hr)
+
+  sim_plot <- bind_rows(lmtp_rr, cox_hr)
 
   truth_lines <- tibble(
-    estimand_label = c("Treatment-policy", "No-switch"),
-    xint = c(truth_all$treatment_policy$true_rd,
-             truth_all$no_switch$true_rd))
+    estimand_label = rep(c("Treatment-policy", "No-switch"), each = 2),
+    Estimator = rep(c("L-TMLE", "Cox (naive)"), 2),
+    xint = c(truth_all$treatment_policy$true_rr, truth_all$treatment_policy$true_hr,
+             truth_all$no_switch$true_rr,        truth_all$no_switch$true_hr))
 
-  ggplot(sim_plot, aes(x = risk_diff, fill = method)) +
-    geom_histogram(alpha = 0.6, bins = 15, position = "identity") +
+  n_iter_used <- length(unique(sim_results$iter[sim_results$method == "LMTP SDR"]))
+
+  ggplot(sim_plot, aes(x = value, fill = Estimator, color = Estimator)) +
+    geom_histogram(alpha = 0.55, bins = 25, position = "identity") +
     facet_wrap(~ estimand_label, scales = "free_x") +
     geom_vline(data = truth_lines,
-               aes(xintercept = xint), linetype = "dashed", color = "red",
-               linewidth = 1) +
-    scale_fill_manual(values = pal[seq_len(length(unique(sim_plot$method)))]) +
-    labs(x = "Risk difference", y = "Count", fill = "Estimator",
-         title = sprintf("Distribution of RD estimates across %d iterations (N = 10,000)",
-                         length(unique(sim_plot$iter))),
-         subtitle = "Dashed line: true risk difference") +
+               aes(xintercept = xint, color = Estimator),
+               linetype = "dashed", linewidth = 1, show.legend = FALSE) +
+    scale_fill_manual(values = c("L-TMLE" = "steelblue",
+                                  "Cox (naive)" = "tomato")) +
+    scale_color_manual(values = c("L-TMLE" = "steelblue",
+                                   "Cox (naive)" = "tomato")) +
+    labs(x = "Estimate (L-TMLE: marginal RR; Cox: marginal HR)",
+         y = "Count",
+         title = sprintf("L-TMLE RR vs. Cox HR estimates across %d iterations (N = 10,000 each)",
+                         n_iter_used),
+         subtitle = "Dashed lines: true marginal RR (blue) and true marginal HR (red)") +
     theme(legend.position = "bottom")
 } else {
   # Placeholder if simulation hasn't been run yet
@@ -565,31 +599,92 @@ if (has_sim && has_truth) {
 ```
 
 ::: {.notes}
-This slide loads from cached simulation results (60-iteration production cache). The simulation compares four estimators: Cox naive, Cox censor-at-switch, Cox IPCW, and LMTP SDR. Production findings: LMTP achieves 98% RD coverage on treatment-policy, 95% on composite, 95% on principal stratum oracle, 86% on no-switch, and 48% on while-on-treatment. Cox methods achieve 8–52% RD coverage across estimands and 0–10% HR coverage across most estimands—their HR CIs confidently report the wrong marginal quantity. DGP: HR_early=2.0, HR_late=0.90, ~11% switching, ~16% event rate, ~19% never-switchers.
+This slide loads from cached simulation results (sim_study_main.rds). Production target is 500 iterations with an expanded Super Learner library (mean / glm / bayesglm / glmnet / ranger); the rds will refresh when the rerun completes. The simulation compares Cox naive, Cox censor-at-switch, Cox IPCW, and estimand-specific L-TMLE (SDR) fits. DGP: HR_early=2.0, HR_late=0.90, ~11% switching, ~16% event rate, ~19% never-switchers.
 :::
 
 
 ## Headline findings: coverage by estimator and estimand {.smaller}
 
-Across 60 iterations (N = 10,000 each), the production simulation yielded:
+```{r}
+#| label: tbl-headline-coverage
+#| cache.extra: !expr file.info(here::here("results", "sim_study_main.rds"))$mtime
 
-| Estimand | LMTP RD cov. | Cox RD cov. (best) | Cox HR cov. (best) |
-|---|---|---|---|
-| Treatment-policy | **98%** | 48% (naive) | 10% (naive) |
-| No-switch | **86%** | 52% | 8% |
-| While-on-treatment | 48% | 8% | 7% |
-| Composite | **95%** | 78% (IPCW) | 38% |
-| Principal stratum (oracle) | **95%** | 97% (naive, see below) | 60% (naive) |
+sim_cache <- here("results", "sim_study_main.rds")
+truth_cache_full <- here("results", "sim_results", "ground_truth.rds")
+
+if (file.exists(sim_cache) && file.exists(truth_cache_full)) {
+  sim <- readRDS(sim_cache)
+  truth <- readRDS(truth_cache_full)
+  trd <- sapply(truth, function(x) x$true_rd)
+  thr <- sapply(truth, function(x) x$true_hr)
+  trr <- sapply(truth, function(x) x$true_rr)
+
+  est_order <- c("treatment_policy", "no_switch", "while_on_treatment",
+                 "composite", "principal_stratum")
+  est_label <- c(treatment_policy = "Treatment-policy",
+                 no_switch = "No-switch",
+                 while_on_treatment = "While-on-treatment",
+                 composite = "Composite",
+                 principal_stratum = "Principal stratum")
+
+  lmtp_match <- c(treatment_policy = "LMTP SDR",
+                  no_switch = "LMTP SDR (no-switch)",
+                  while_on_treatment = "LMTP SDR (WOT)",
+                  composite = "LMTP SDR (composite)",
+                  principal_stratum = "LMTP SDR (oracle PS)")
+
+  cox_match <- c(treatment_policy   = "Cox naive",
+                 no_switch          = "Cox IPCW",
+                 while_on_treatment = "Cox censor-at-switch",
+                 composite          = "Cox naive",
+                 principal_stratum  = "Cox naive")
+
+  cox_short <- c("Cox naive" = "naive on full follow-up",
+                 "Cox IPCW"  = "IPCW for switching",
+                 "Cox censor-at-switch" = "censor at switch",
+                 "Cox naive (composite)" = "naive on composite endpoint")
+
+  fmtp <- function(x) ifelse(is.na(x), "—", sprintf("%.0f%%", 100 * x))
+
+  rows <- lapply(est_order, function(e) {
+    lmtp_e <- sim %>% filter(method == lmtp_match[e], estimand == e, converged)
+    cox_e  <- sim %>% filter(method == cox_match[e], estimand == e, converged)
+
+    rd_cov  <- mean(lmtp_e$ci_low <= trd[e] & lmtp_e$ci_high >= trd[e],
+                    na.rm = TRUE)
+    rr_cov  <- mean(lmtp_e$rr_ci_low <= trr[e] & lmtp_e$rr_ci_high >= trr[e],
+                    na.rm = TRUE)
+    hr_cov  <- mean(cox_e$hr_ci_low <= thr[e] & cox_e$hr_ci_high >= thr[e],
+                    na.rm = TRUE)
+
+    tibble(
+      Estimand   = est_label[e],
+      `True RR`  = sprintf("%.2f",  trr[e]),
+      `True HR`  = sprintf("%.2f",  thr[e]),
+      `L-TMLE RD coverage` = fmtp(rd_cov),
+      `L-TMLE RR coverage` = fmtp(rr_cov),
+      `Aligned Cox HR coverage` =
+        sprintf("%s (%s)", fmtp(hr_cov), cox_short[cox_match[e]])
+    )
+  })
+
+  knitr::kable(bind_rows(rows), format = "pipe",
+               caption = sprintf("Coverage of 95%% CIs across %d simulated datasets (N = 10,000 each)",
+                                 length(unique(sim$iter))))
+} else {
+  cat("*Simulation results not yet cached.*")
+}
+```
 
 . . .
 
 Two findings deserve emphasis:
 
-- **Cox HR confidence intervals confidently exclude the true marginal HR.** For treatment-policy, HR coverage was 10% (naive) and 0% (censor-at-switch, IPCW). These are narrow intervals that miss the truth.
-- **Cox naive on principal stratum is not a coincidence.** Under the mild switching selection in this DGP, the never-switcher subpopulation is structurally similar to the overall cohort. Under stronger selection, Cox naive would overestimate the PS risk difference just as it does for the other estimands.
+- **L-TMLE achieves near-nominal coverage on both the RD and RR scales** for every estimand it directly targets — including while-on-treatment once treatment is included as a (discretized) time-varying node in the L-TMLE fit.
+- **Cox HR confidence intervals confidently exclude the true marginal HR.** For the treatment-policy estimand HR coverage is effectively 0%; the only setting where Cox HR coverage approaches nominal is the principal-stratum oracle, where the never-switcher subgroup happens to resemble the overall cohort under this DGP.
 
 ::: {.notes}
-The HR coverage finding is the most striking quantitative result. Emphasize that "0% coverage" is not a wide-CI-miss but a confident wrong answer. The PS-via-Cox finding is a teaching point: don't interpret Cox's good PS performance as a general property of the estimator.
+The HR coverage finding is the most striking quantitative result. "0% coverage" is not a wide-CI-miss but a confident wrong answer. The PS-via-Cox finding is a teaching point — under stronger informative switching the Cox HR would also miss on the principal stratum. The relative ordering of true RDs across estimands is DGP-specific: in other scenarios the while-on-treatment effect can be the largest. WOT performance improved markedly after reformulating L-TMLE to absorb switching as a competing event in the outcome (`competing_risk_at_switch = TRUE`).
 :::
 
 
@@ -607,14 +702,14 @@ The estimand framework applies to any post-baseline event, not just treatment sw
 - Hypothetical: model a world without dropout
 - WOT: censor at disenrollment (needs censoring model)
 
-*LMTP C columns handle this structurally identical to switch-censoring.*
+*L-TMLE C columns handle this structurally identical to switch-censoring.*
 :::
 
 ::: {.column width="50%"}
 **Informative monitoring**
 
 - More-monitored patients have more chances for events to be detected
-- LMTP models monitoring as a time-varying covariate jointly with outcome
+- L-TMLE models monitoring as a time-varying covariate jointly with outcome
 
 **Competing risks**
 
@@ -629,12 +724,12 @@ The estimand framework applies to any post-baseline event, not just treatment sw
 
 1. The Cox HR does not generally correspond to the marginal risk contrast defined by the estimand.
 2. Conventional Cox-based adjustments (censor, reweight) can amplify bias when the adjustment model is misspecified.
-3. Estimand-aligned approaches (LMTP, TMLE) target the marginal quantity directly but depend on positivity and model specification.
+3. Estimand-aligned approaches (L-TMLE, TMLE) target the marginal quantity directly but depend on positivity and model specification.
 
 :::
 
 ::: {.notes}
-The goal of this slide is to generalize beyond the hepatitis B switching scenario. The pattern of findings — wrong scale, wrong adjustment, LMTP as a structural fix — applies to other intercurrent events with the same logic.
+The goal of this slide is to generalize beyond the hepatitis B switching scenario. The pattern of findings — wrong scale, wrong adjustment, L-TMLE as a structural fix — applies to other intercurrent events with the same logic.
 :::
 
 
@@ -707,7 +802,7 @@ if (has_sup) {
 Under poor support:
 
 - The **censor-at-switch Cox HR diverges** from the naive HR (censoring removes a large, non-random fraction of the active arm)
-- **LMTP estimates become unstable** as the censoring model extrapolates into poorly supported regions
+- **L-TMLE estimates become unstable** as the censoring model extrapolates into poorly supported regions
 - Diagnostics — switching probabilities, effective sample sizes, propensity score overlap — should be examined **before** interpreting any estimate
 
 ::: {.notes}
@@ -748,18 +843,51 @@ The support diagnostic is as important as the estimator choice. A well-aligned e
 ::::
 
 
+## Which estimand to use? {.smaller}
+
+A practical hierarchy from **most to least feasible** under data limitations, distilled from the manuscript. *Feasibility is not scientific priority — pick the estimand that answers your question, then check support.*
+
+::: {style="font-size: 0.78em;"}
+
+| Rank | Estimand | When it's the right pick | Caveat |
+|---|---|---|---|
+| 1 | **Treatment-policy** | Default for safety; reflects observed practice; only needs baseline-treatment positivity | Real-world effect including downstream switching — not a pure pharmacological signal |
+| 2 | **While-on-treatment** (competing-risks) | Want a descriptive cause-specific 180-day risk; same positivity as TP | Switching halts outcome ascertainment — descriptive quantity, not a counterfactual under sustained treatment |
+| 3 | **Composite** | Want to sidestep switching positivity and a single combined endpoint is clinically meaningful | Switching itself counts as an event — inflates the effect (RR 1.46 vs 1.25 for TP) and conflates tolerability with safety |
+| 4 | **Principal stratum** | Natural fit for adherence-adjusted, mediation-flavoured, or label-restriction questions | Effect defined on the latent never-switcher subset (~19% of cohort), not the full population; needs cross-world + monotonicity assumptions. The headline 96% coverage is from the *oracle* analysis using cross-world potential outcomes — the observable approximation (restrict to observed non-switchers) achieves only ~50% RD coverage |
+| 5 | **No-switch** (hypothetical) | Pure pharmacological effect needed and switching is rare / well-modelled | Most demanding sequential positivity; coverage drops to 87% even at 11% switching — consider a **stochastic intervention** ("reduce switching by 50%") instead when switching exceeds ~40–50% |
+
+:::
+
+. . .
+
+**Three rules that fall out of the simulation:**
+
+- *Specify the estimand before the estimator* — the same data give 1.25–1.46 true RR depending on the strategy.
+- *If using Cox, do not interpret the HR as a marginal risk contrast*, and do not assume a Cox-derived RD rescues the analysis under non-proportional hazards.
+- *Match the estimator to the estimand and the truth used for validation* — most apparent "estimator failures" we caught were silent estimand mismatches.
+
+::: {.notes}
+Anchor each row in a clinical scenario rather than reading verbatim. The 40–50% switching threshold for retiring the no-switch estimand comes from the manuscript's positivity discussion. The no-switch and IPCW interpretation of WOT target the same counterfactual under different identifying assumptions — they are not separate estimands in the population-parameter sense, even though ICH E9(R1) lists them separately. Stochastic interventions (Díaz/Williams/Hoffman LMTP shifts, Rytgaard 2026 calibrated intensity-scaling) sit outside the ICH E9(R1) taxonomy but offer a route when deterministic regimes lack support.
+:::
+
+
 ## Conclusions {.smaller}
 
 :::: {.columns}
 ::: {.column width="60%"}
 
-**Different estimands answer different questions.** Under the simulation DGP, the same data yielded true risk differences from +6.4% (WOT) to +18.3% (composite), a range that depends entirely on how switching is handled.
+**Different estimands answer different questions.** Under this DGP the true risk differences ranged from +6.4% (WOT) to +18.3% (composite); under a different scenario the relative ordering can change entirely.
 
-**Cox hazard ratios do not target the estimand.** Across most estimand × estimator combinations, the Cox HR confidence interval contained the true marginal HR less than 40% of the time — and in the headline treatment-policy case, fewer than 10%.
+**The ICH E9(R1) strategies are one component of an estimand**, not the full definition — population, time horizon, and outcome must also be specified.
 
-**LMTP targets the marginal risk difference directly.** Near-nominal coverage (95–98%) for four of five estimands, with the while-on-treatment estimand the remaining weak spot (48%) due to censoring-model specification.
+**Cox hazard ratios do not target the estimand.** For treatment-policy, no-switch, and while-on-treatment, the Cox HR 95% CI contained the true marginal HR less than 15% of the time.
 
-**Diagnostics are not optional.** Identification does not guarantee estimation. Positivity and support should be assessed before interpreting any causal estimate, and the estimand hierarchy (TP most robust → NS most demanding) should inform estimand selection.
+**L-TMLE targets the marginal risk contrast directly.** Near-nominal RD and RR coverage (87–96%) across all five estimands once the treatment node is included in the L-TMLE specification.
+
+**Stochastic and realistic interventions are a natural next step** when strict deterministic interventions (e.g., "no one switches") lack data support.
+
+**Diagnostics are not optional.** Identification does not guarantee estimation. Positivity should be assessed iteratively with estimand specification, before interpreting any causal estimate.
 :::
 
 ::: {.column width="40%"}
@@ -768,23 +896,53 @@ The support diagnostic is as important as the estimator choice. A well-aligned e
 
 ```{r}
 #| label: fig-roadmap-small
-#| fig-width: 4
-#| fig-height: 4
+#| fig-width: 4.5
+#| fig-height: 5
 
 steps_small <- tibble(
   label = c("Question", "DAG", "Identify", "Estimand",
-            "Estimator", "Sensitivity"),
-  y = 6:1
+            "Data support", "Estimator", "Sensitivity"),
+  y = 7:1,
+  loop = c(FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, FALSE)
+)
+
+# forward arrows
+fwd <- steps_small %>% filter(y > 1) %>%
+  mutate(yend = y - 1) %>%
+  rowwise() %>% mutate(
+    y_start = y - 0.35,
+    y_end   = yend + 0.35
+  ) %>% ungroup()
+
+# back arrows for the iterative loop (Estimand <-> Data support <-> Estimator)
+# nodes: Estimand y=4, Data support y=3, Estimator y=2
+back <- tibble(
+  y_start = c(3, 2) + 0.20,    # Data support -> Estimand,  Estimator -> Data support
+  y_end   = c(4, 3) - 0.20,
+  x       = 1.30,
+  xend    = 1.30
 )
 
 ggplot(steps_small, aes(x = 1, y = y)) +
-  geom_segment(aes(x = 1, xend = 1, y = y - 0.35, yend = y - 0.65),
+  # forward (down) arrows
+  geom_segment(data = fwd,
+               aes(x = 1, xend = 1, y = y_start, yend = y_end),
                arrow = arrow(length = unit(0.15, "cm")),
-               color = "grey40",
-               data = steps_small %>% filter(y > 1)) +
-  geom_label(aes(label = label), size = 5, fill = "white",
-             label.size = 0.5, fontface = "bold") +
-  coord_cartesian(xlim = c(0.5, 1.5), ylim = c(0.3, 6.7)) +
+               color = "grey40") +
+  # back (up) arrows showing the iterative loop
+  geom_segment(data = back,
+               aes(x = x, xend = xend, y = y_start, yend = y_end),
+               arrow = arrow(length = unit(0.18, "cm"), ends = "last"),
+               color = "tomato", linewidth = 0.9) +
+  geom_label(aes(label = label,
+                 fill = loop),
+             size = 4.5, label.size = 0.5, fontface = "bold") +
+  scale_fill_manual(values = c(`FALSE` = "white", `TRUE` = "#FFE9E4"),
+                    guide = "none") +
+  annotate("text", x = 1.45, y = 3,
+           label = "iterate", color = "tomato",
+           fontface = "bold.italic", size = 6, hjust = 0) +
+  coord_cartesian(xlim = c(0.5, 2.05), ylim = c(0.3, 7.7)) +
   theme_void()
 ```
 :::
@@ -824,11 +982,11 @@ ggplot(steps_small, aes(x = 1, y = y)) +
 | `gamma_ckd` | 0.60 | log-HR for CKD on switching |
 | CKD prevalence | 8% | Key confounder |
 | N (simulation) | 10,000 | Per iteration |
-| Time bins | 14-day (biweekly) | For LMTP discretisation |
+| Time bins | 14-day (biweekly) | For L-TMLE discretisation |
 
 ### Appendix: estimand–estimator alignment table
 
-| Estimand | Cox naive | Cox censor-at-switch | LMTP SDR |
+| Estimand | Cox naive | Cox censor-at-switch | L-TMLE |
 |---|---|---|---|
 | Treatment-policy | Conditional HR (not marginal RD) | Wrong estimand (censors at switch) | Baseline trt; marginal RD under static intervention |
 | No-switch | Includes post-switch outcomes | Assumes non-informative censoring | Time-varying trt; holds constant = no-switch |

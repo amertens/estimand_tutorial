@@ -1,3 +1,28 @@
+# DGP.R
+# Data-generating process for the hepatitis B nephrotoxicity simulation.
+#
+# Functions exported:
+#   generate_hep_data()  Generate one cohort (subject-level data frame).
+#                        Confounded baseline treatment, piecewise-exponential
+#                        events with optional non-proportional hazards (HR
+#                        before and after `tau`), informative switching driven
+#                        by treatment and CKD, optional admin censoring.
+#                        Returns one row per subject with follow_time, event,
+#                        switch_time, treatment, baseline covariates.
+#   derive_estimand()    Given the raw cohort and an estimand label, produce
+#                        the dataset shape used by Cox / KM analyses for that
+#                        estimand (composite outcome, censor-at-switch, etc.).
+#
+# Key DGP parameters (see argument list below for full set):
+#   p_trt_target      target marginal treatment prevalence
+#   h0                baseline event hazard rate (per day)
+#   HR_early/HR_late  early/late event HR for treated vs. control
+#   tau               non-PH change-point (days)
+#   lambda_sw0        baseline switch hazard rate
+#   gamma_A           log-HR for treatment on switch hazard
+#   gamma_ckd         log-HR per CKD on switch hazard
+#   dep_censor        TRUE -> admin censoring depends on baseline risk
+
 library(tidyverse)
 
 

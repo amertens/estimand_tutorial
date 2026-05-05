@@ -1,18 +1,21 @@
 # helpers.R
 # Utility functions for the estimand-estimator simulation study.
-# Provides Cox regression variants, LMTP data preparation, and risk utilities.
+# Provides Cox regression variants, Cox g-computation, LMTP data
+# preparation, and risk utilities.
 #
-# LMTP specification per estimand:
-#   treatment_policy:   time_varying_trt=FALSE, censor_at_switch=FALSE.
-#                       Baseline treatment only; censoring model handles admin censoring.
-#   no_switch:          time_varying_trt=TRUE, censor_at_switch=FALSE.
-#                       A_j columns with static_binary = hold treatment constant.
-#   while_on_treatment: time_varying_trt=FALSE, censor_at_switch=TRUE.
-#                       Baseline treatment only; switching enters through C columns.
-#   composite:          time_varying_trt=FALSE, censor_at_switch=FALSE.
-#                       Composite outcome in Y columns.
-#   principal_stratum:  time_varying_trt=FALSE, censor_at_switch=FALSE.
-#                       Baseline treatment on oracle never-switcher subset.
+# LMTP data-prep specification per estimand (see prepare_lmtp_data):
+#   treatment_policy:   time_varying_trt=FALSE, switching ignored
+#   no_switch:          time_varying_trt=TRUE, switching trajectory in A_j
+#   while_on_treatment: time_varying_trt=FALSE, competing_risk_at_switch=TRUE
+#                       (M1 / Rufibach cause-specific cumulative incidence)
+#   composite:          time_varying_trt=FALSE, composite outcome in Y
+#   principal_stratum:  time_varying_trt=FALSE, baseline-only treatment on
+#                       the oracle never-switcher subset
+#
+# An older WOT specification used censor_at_switch=TRUE (switching as a
+# censoring event, IPCW / Latimer interpretation). That mode is retained
+# in prepare_lmtp_data() for reference but is no longer the default WOT
+# pipeline; see the manuscript's discussion of the two interpretations.
 
 
 suppressPackageStartupMessages({
@@ -430,18 +433,50 @@ intervention_no_switch <- function(data, trt) {
 #'     as a censoring event: after switch_time, C_j = 0. Used for the
 #'     while-on-treatment (WOT) estimand.
 #'
+#' Three switching specifications are supported, controlled by
+#' `censor_at_switch` and `competing_risk_at_switch`:
+#'
+#'   censor_at_switch = FALSE, competing_risk_at_switch = FALSE (default):
+#'     Switching is ignored in the C and Y columns. Treatment-policy /
+#'     no-switch / composite / principal-stratum estimands.
+#'
+#'   censor_at_switch = TRUE, competing_risk_at_switch = FALSE:
+#'     Switching is treated as a *censoring* event. Y_j marks events
+#'     before switching; C_j = 0 starting at the switch bin. Identifies
+#'     the counterfactual no-switch risk under the (typically untestable)
+#'     non-informative censoring assumption -- mathematically equivalent
+#'     to the no-switch hypothetical estimand under that assumption.
+#'     This is the Latimer (2014) / IPCW pharmacoepi tradition.
+#'
+#'   competing_risk_at_switch = TRUE (overrides censor_at_switch):
+#'     Switching is treated as a *competing event*: Y_j marks events
+#'     before switching, but switchers without prior events stay in the
+#'     risk set with Y = 0 throughout (no censoring from switching).
+#'     C_j = 0 only for admin censoring before any switch or event.
+#'     Identifies the descriptive cause-specific cumulative incidence at
+#'     tau under intervention on baseline treatment -- the M1 / Rufibach
+#'     (2019) interpretation of the WOT estimand. Unlike the IPCW route,
+#'     this targets the same population parameter as the truth used to
+#'     validate the estimator (calc_truth.R::truth_while_on_treatment).
+#'
 #' @param dat data.frame from generate_hep_data().
 #' @param tau integer; follow-up horizon in days.
 #' @param bin_width integer; days per time bin.
 #' @param time_varying_trt logical; create A_j columns if TRUE.
 #' @param censor_at_switch logical; include switching in C columns if TRUE.
+#'   Ignored if competing_risk_at_switch is TRUE.
+#' @param competing_risk_at_switch logical; treat switching as a competing
+#'   event absorbed into the outcome definition (rather than as a censoring
+#'   event). Used for the M1 cause-specific cumulative incidence interpretation
+#'   of WOT. Takes precedence over censor_at_switch.
 #' @param trt_var character; baseline treatment column name.
 #' @param switch_var character; switch time column name.
 #' @param baseline character vector of baseline covariate names.
 #' @return list with data, Y_cols, C_cols, A_cols (or NULL), baseline, n_bins.
 prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,
-                              time_varying_trt = TRUE,
+                              time_varying_trt = FALSE,
                               censor_at_switch = FALSE,
+                              competing_risk_at_switch = FALSE,
                               trt_var = "treatment",
                               switch_var = "switch_time",
                               baseline = c("age", "sex_male", "ckd",
@@ -454,9 +489,32 @@ prepare_lmtp_data <- function(dat, tau = 180, bin_width = 1,
   if (tail(bin_edges, 1) < tau) bin_edges <- c(bin_edges, tau)
   n_bins <- length(bin_edges) - 1
 
-  # When censor_at_switch = TRUE, redefine follow-up to end at switch
-  # so that Y and C columns reflect WOT censoring.
-  if (censor_at_switch && switch_var %in% names(dat)) {
+  # competing_risk_at_switch: M1 / Rufibach interpretation. Switching is
+  # absorbed into the outcome definition rather than the censoring nodes.
+  # Subjects who switch without a prior event stay in the risk set with
+  # Y = 0 forever (their M1 outcome is locked at 0 from the switch onward).
+  # Admin censoring before any switch is the only true censoring event.
+  if (competing_risk_at_switch && switch_var %in% names(dat)) {
+    dat <- dat %>%
+      mutate(
+        sw_time = .data[[switch_var]],
+        # Event-before-switch indicator (the M1 outcome)
+        aki_event   = as.integer(event == 1 &
+                                 event_time <= sw_time &
+                                 event_time <= tau),
+        time_to_aki = if_else(aki_event == 1, event_time, as.numeric(tau)),
+        # Censoring fires only when admin censoring happens BEFORE switch
+        # and before tau. Admin censoring after a switch is irrelevant
+        # because the M1 outcome is already locked at 0.
+        cens_event   = as.integer(event == 0 &
+                                  follow_time < sw_time &
+                                  follow_time < tau),
+        time_to_cens = if_else(cens_event == 1, follow_time, as.numeric(tau))
+      )
+  # When censor_at_switch = TRUE (and competing_risk_at_switch = FALSE),
+  # redefine follow-up to end at switch so Y and C columns reflect the
+  # IPCW / Latimer interpretation: switching is a censoring event.
+  } else if (censor_at_switch && switch_var %in% names(dat)) {
     dat <- dat %>%
       mutate(
         wot_follow = pmin(event_time, .data[[switch_var]], follow_time, tau),
@@ -596,17 +654,23 @@ run_lmtp_analysis <- function(lmtp_prep,
                               shift_off = NULL,
                               add_baseline_only = FALSE,
                               folds = 2,
-                              learners = c("SL.glm")) {
+                              learners = c("SL.glm"),
+                              k = Inf) {
+  # `k` controls the Markov order of the nuisance history used by lmtp:
+  #   k = Inf (default) -> full history (lmtp default)
+  #   k = 0             -> Markov assumption (only most recent time-varying
+  #                        covariates feed the nuisance models)
+  # Used by R/run_markov_sensitivity.R to compare full-history vs Markov fits.
   requireNamespace("lmtp", quietly = TRUE)
-  
+
   if (is.null(shift_on))  shift_on  <- lmtp::static_binary_on
   if (is.null(shift_off)) shift_off <- lmtp::static_binary_off
-  
+
   # Use time-varying treatment columns if available (from prepare_lmtp_data_tv)
   trt_spec <- if (!is.null(lmtp_prep$A_cols)) lmtp_prep$A_cols else "treatment"
-  
-   
-  
+
+
+
   common_args <- list(
     data    = lmtp_prep$data,
     trt     = trt_spec,
@@ -616,7 +680,8 @@ run_lmtp_analysis <- function(lmtp_prep,
     outcome_type = "survival",
     folds   = folds,
     learners_trt     = learners,
-    learners_outcome = learners
+    learners_outcome = learners,
+    k       = k
   )
   
   # Full always_on vs always_off
@@ -627,14 +692,44 @@ run_lmtp_analysis <- function(lmtp_prep,
   
   contrast_rr <- lmtp::lmtp_contrast(res_on, ref = res_off, type = "rr")
   contrast_rd <- lmtp::lmtp_contrast(res_on, ref = res_off, type = "additive")
-  
+
+  # ── Risk-scale RR with EIF-based delta-method CI ────────────────────────
+  # lmtp 1.5.0 exposes the per-subject EIF for theta (survival probability)
+  # in the S7 estimate object. Convert to an EIF for log(R_1/R_0) where
+  # R_a = 1 - S_a:
+  #   d log(R_a)/dS_a = -1/R_a
+  #   IF[i] for log(RR) = -EIF_1[i]/R_1 + EIF_0[i]/R_0
+  # SE(log RR_hat) = sd(IF) / sqrt(n).
+  rr_ci <- tryCatch({
+    s1   <- res_on$estimate@x
+    s0   <- res_off$estimate@x
+    r1   <- 1 - s1
+    r0   <- 1 - s0
+    log_rr <- log(r1) - log(r0)
+    eif1 <- res_on$estimate@eif
+    eif0 <- res_off$estimate@eif
+    if (length(eif1) != length(eif0)) {
+      stop("Per-arm EIFs differ in length")
+    }
+    if_log_rr <- -eif1 / r1 + eif0 / r0
+    se_log_rr <- sd(if_log_rr) / sqrt(length(if_log_rr))
+    list(rr        = exp(log_rr),
+         rr_ci_low = exp(log_rr - 1.96 * se_log_rr),
+         rr_ci_high = exp(log_rr + 1.96 * se_log_rr))
+  }, error = function(e) {
+    list(rr = NA_real_, rr_ci_low = NA_real_, rr_ci_high = NA_real_)
+  })
+
  out<- list(
     res_on      = res_on,
     res_off     = res_off,
-    risk_trt    = 1 - res_on$theta[length(res_on$theta)],
-    risk_ctrl   = 1 - res_off$theta[length(res_off$theta)],
+    risk_trt    = 1 - res_on$estimate@x,
+    risk_ctrl   = 1 - res_off$estimate@x,
     contrast_rr = contrast_rr,
-    contrast_rd = contrast_rd
+    contrast_rd = contrast_rd,
+    rr          = rr_ci$rr,
+    rr_ci_low   = rr_ci$rr_ci_low,
+    rr_ci_high  = rr_ci$rr_ci_high
   )
   
  # Optional: baseline-only intervention on wide-format time-varying data.
@@ -720,6 +815,109 @@ boot_km_rd_ci <- function(dat, t, n_boot = 200, weights = NULL) {
   if (length(rd_boot) < 10) return(list(rd_ci_low = NA, rd_ci_high = NA))
   list(rd_ci_low = quantile(rd_boot, 0.025),
        rd_ci_high = quantile(rd_boot, 0.975))
+}
+
+#' Standardized (g-computation) marginal risk difference from a fitted Cox model.
+#'
+#' Uses the fitted Cox model to predict counterfactual survival at `tau` for
+#' every subject under `treatment = 0` and `treatment = 1`, holding all other
+#' covariates at their observed values. Averages `1 - S_hat(tau | A = a, X)`
+#' across subjects to obtain a confounder-adjusted marginal risk under each
+#' counterfactual; the risk difference is the contrast.
+#'
+#' Unlike `km_risk_at()` (which uses an unadjusted KM on whatever data the
+#' Cox variant fit on), this function gives a *covariate-adjusted marginal*
+#' risk difference that is directly comparable to LMTP's standardized RD.
+#' Baseline hazard estimation inherits from the Cox fit, so variants that
+#' censored at switch or applied IPCW weights are carried through: the
+#' g-comp RD targets the marginal RD under the switching-adjustment
+#' mechanism encoded in the fit.
+#'
+#' Collapsibility / non-proportionality caveats: the RD on the risk scale
+#' at a fixed `tau` is collapsible, so g-comp avoids the Cox-HR
+#' non-collapsibility issue. Non-proportionality is absorbed into the
+#' time-specific risk summary (but the underlying Cox fit still assumes
+#' PH when forming the cumulative hazard).
+#'
+#' @param cox_fit fitted coxph object containing a `treatment` term.
+#' @param dat_pred data.frame with all predictor columns the model used,
+#'   including `treatment` and any adjustment covariates. Typically the
+#'   same data passed to the fit function.
+#' @param tau numeric; horizon at which to evaluate the risk difference.
+#' @param trt_var character; name of the treatment column (default `"treatment"`).
+#' @return list with risk_ctrl, risk_trt, risk_diff.
+cox_gcomp_rd <- function(cox_fit, dat_pred, tau, trt_var = "treatment") {
+  # Memory-efficient g-computation:
+  #   S_i(tau) = exp(-H0(tau) * exp(lp_i_uncentered))
+  # where H0(tau) is the baseline cumulative hazard at tau (centered at 0)
+  # and lp_i_uncentered is the linear predictor without centering.
+  # Avoids survfit.coxph(), which allocates an O(n_events x n_subjects)
+  # matrix and blows out RAM during bootstrap loops.
+  #
+  # predict.coxph(reference = "zero") requires survival >= 3.6.
+  if (utils::packageVersion("survival") < "3.6") {
+    stop("cox_gcomp_rd() requires survival >= 3.6 for ",
+         "predict.coxph(reference = 'zero'). Installed: ",
+         utils::packageVersion("survival"))
+  }
+  bh <- basehaz(cox_fit, centered = FALSE)
+  # Largest cumulative hazard at or before tau (step function)
+  prior <- bh$hazard[bh$time <= tau]
+  H0_tau <- if (length(prior)) max(prior) else 0
+  if (!is.finite(H0_tau)) H0_tau <- 0
+
+  d0 <- dat_pred; d0[[trt_var]] <- 0L
+  d1 <- dat_pred; d1[[trt_var]] <- 1L
+
+  # predict.coxph type = "lp" returns the *centered* linear predictor by
+  # default; the reference argument selects centering. We need the
+  # uncentered LP to pair with basehaz(centered = FALSE).
+  lp0 <- predict(cox_fit, newdata = d0, type = "lp", reference = "zero")
+  lp1 <- predict(cox_fit, newdata = d1, type = "lp", reference = "zero")
+
+  s0 <- exp(-H0_tau * exp(lp0))
+  s1 <- exp(-H0_tau * exp(lp1))
+
+  list(risk_ctrl = mean(1 - s0),
+       risk_trt  = mean(1 - s1),
+       risk_diff = mean(1 - s1) - mean(1 - s0))
+}
+
+#' Bootstrap confidence interval for the Cox g-computation risk difference.
+#'
+#' Resamples subjects with replacement, refits the Cox model via `fit_fun`
+#' on each resample, and re-runs g-computation. Reports 2.5/97.5 percentile
+#' bounds of the bootstrap distribution. Refitting is the bottleneck; keep
+#' `n_boot` modest (default 200) unless deeper precision is needed.
+#'
+#' @param dat_input data.frame in the shape accepted by `fit_fun`
+#'   (e.g., the raw output of `generate_hep_data()` with follow_time,
+#'   event, switch_time, switched, treatment, and baseline covariates).
+#' @param tau numeric; horizon.
+#' @param covars character vector of adjustment covariates for the Cox fit.
+#' @param n_boot integer; number of bootstrap replicates.
+#' @param fit_fun function used to fit the Cox model on each resample
+#'   (e.g., `fit_cox_naive`, `fit_cox_censor_switch`, `fit_cox_ipcw`).
+#' @param trt_var character; treatment column (default `"treatment"`).
+#' @return list with rd_ci_low, rd_ci_high.
+boot_cox_gcomp_rd_ci <- function(dat_input, tau, covars, n_boot = 200,
+                                 fit_fun = fit_cox_naive,
+                                 trt_var = "treatment") {
+  rd_boot <- numeric(n_boot)
+  n <- nrow(dat_input)
+  for (b in seq_len(n_boot)) {
+    idx <- sample.int(n, n, replace = TRUE)
+    d_b <- dat_input[idx, , drop = FALSE]
+    d_b$id <- seq_len(nrow(d_b))
+    rd_boot[b] <- tryCatch({
+      fit_b <- fit_fun(d_b, tau = tau, covars = covars)
+      cox_gcomp_rd(fit_b$model, d_b, tau, trt_var = trt_var)$risk_diff
+    }, error = function(e) NA_real_)
+  }
+  rd_boot <- rd_boot[!is.na(rd_boot)]
+  if (length(rd_boot) < 10) return(list(rd_ci_low = NA, rd_ci_high = NA))
+  list(rd_ci_low  = as.numeric(quantile(rd_boot, 0.025)),
+       rd_ci_high = as.numeric(quantile(rd_boot, 0.975)))
 }
 
 #' Extract hazard ratio and CI from a coxph fit.
