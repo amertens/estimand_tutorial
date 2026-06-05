@@ -1,0 +1,93 @@
+Knitting draft-estimands-manuscript-v6.qmd ...
+
+
+processing file: draft-estimands-manuscript-v6.qmd
+1/77                      
+2/77 [setup]              
+3/77                      
+4/77 [load-packages]      
+5/77                      
+6/77 [source-helpers]     
+7/77                      
+8/77 [tbl-decision-early] 
+9/77                      
+10/77 [generate-data]      
+11/77                      
+12/77 [data-summary]       
+13/77                      
+14/77 [fig-dag]            
+15/77                      
+16/77 [compute-truth]      
+17/77                      
+18/77 [tbl-truth]          
+19/77                      
+20/77 [tbl-alignment]      
+21/77                      
+22/77 [cox-fits]           
+23/77                      
+24/77 [tbl-cox]            
+25/77                      
+26/77 [fig-km-curves]      
+27/77                      
+28/77 [lmtp-estimates]     
+29/77                      
+30/77 [tbl-lmtp-singleton] 
+31/77                      
+32/77 [support-scenarios]  
+33/77                      
+34/77 [fig-support]        
+35/77                      
+36/77 [fig-support-ckd]    
+37/77                      
+38/77 [tbl-support-est]    
+39/77                      
+40/77 [sim-load]           
+41/77                      
+42/77 [tbl-sim-main]       
+43/77                      
+44/77 [fig-sim-rd]         
+45/77                      
+46/77 [tbl-sim-supp]       
+47/77                      
+48/77 [fig-sim-supp]       
+49/77                      
+50/77 [tbl-sim-bias-rmse]  
+51/77                      
+52/77 [fig-coverage]       
+53/77                      
+54/77 [fig-bias-comparison]
+55/77                      
+56/77 [fig-no-switch-probs]
+57/77                      
+58/77 [fig-no-switch-ess]  
+59/77                      
+60/77 [tbl-markov]         
+61/77                      
+62/77 [tbl-depcensor]      
+63/77                      
+64/77 [tbl-dgp-params]     
+65/77                      
+66/77 [tbl-ipcw-supp]      
+67/77                      
+68/77 [tbl-tv-lmtp]        
+69/77                      
+70/77 [tbl-tv-cox]         
+71/77                      
+72/77 [tbl-ph-cox]         
+73/77                      
+74/77 [tbl-ph-lmtp]        
+75/77                      
+76/77 [tbl-stochastic]     
+77/77                      
+output file: draft-estimands-manuscript-v6.md
+
+[1] "draft-estimands-manuscript-v6.md"
+Resolving cross-references...
+Calling pandoc...
+pandoc exit: 0 
+Output file: draft-estimands-manuscript-v6.docx - 88296 bytes
+
+Audit:
+  'Table Table': 0
+  'Figure Figure': 0
+  Unresolved xref tokens: 0
