@@ -11,7 +11,7 @@ claude
 
 ---
 
-Run three simulation jobs in this repository, one after another, and report back after each.
+Run four simulation jobs in this repository, one after another, and report back after each.
 Do not edit any code or input file; the only new files are the ones the runs write.
 
 **Setup (once).** Confirm R 4.4.x is installed and always use `Rscript --vanilla` (a user profile
@@ -53,6 +53,14 @@ same command (every job saves one checkpoint per cohort and skips cohorts alread
   `Rscript --vanilla sandbox_rwe/run/70_psw_boot1000.R > sandbox_rwe/results/psw_boot1000.log 2>&1`
   (800 cohorts, about 11 minutes each per worker, so roughly 15 hours with 10 workers; Cox models only, so memory per worker is small).
 - Output: `sandbox_rwe/results/psw_boot1000_rows.rds`.
+
+**Job 4: SDR for while on treatment and the composite in the five one-feature scenarios** (`sandbox_rwe/run/72_wot_comp_scenarios.R`).
+- Pilot: `Rscript --vanilla sandbox_rwe/run/72_wot_comp_scenarios.R pilot` (one cohort of the common-outcome
+  scenario). Expect two rows, both `ok = TRUE`, with RDs near the printed true values.
+- Full run, in the background:
+  `Rscript --vanilla sandbox_rwe/run/72_wot_comp_scenarios.R > sandbox_rwe/results/wotcomp.log 2>&1`
+  (5 scenarios x 200 cohorts, two SDR fits per cohort, about 1 minute per cohort per worker; SDR uses more memory than Cox, so apply the memory rule).
+- Output: `sandbox_rwe/results/wotcomp_rows.rds`.
 
 **After each job: report and push.** Report the run time, `RWE_CORES`, the final "rows / failed"
 line, and any failed rows by method with their error messages. Then commit only that job's output

@@ -140,6 +140,11 @@ estimator_set <- function(set, sim) {
       list(reduced = .e(.reduced_fun(sim, 0.5), "sdr", "reduced_leaving", "SDR", 0.5)),
       .ps_ests(sim)["psw"]),
     principal = .ps_ests(sim),
+    # SDR for while on treatment and the composite in the one-feature scenarios (run/72);
+    # same estimator names, so the same per-estimator seeds as the base set
+    wotcomp = list(
+      wot = .sdr_e(sim, "while_on_treatment"),
+      comp = .sdr_e(sim, "composite")),
     grid = setNames(lapply(c(0.75, 0.25, 0.1), function(dl)
       .e(.reduced_fun(sim, dl), "sdr", "reduced_leaving", "SDR", dl)),
       paste0("reduced_", c(0.75, 0.25, 0.1))),
