@@ -1,0 +1,29 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+/external docs/
+
+# knitr / Quarto build artifacts (the tutorial HTML embeds its resources)
+/cache/
+*_cache/
+*_files/
+*.rmarkdown
+tutorial/render*.log
+
+# per-iteration simulation checkpoints and run logs
+results/sim_partial_*/
+results/logs/
+
+# third-party papers and rendered PDF previews in the project root
+/*.pdf
+
+# large regenerable OpenAlex API dumps
+writing/lit/*_openalex.json
+
+# Claude Code local state
+.claude/scheduled_tasks.lock
+
+# realistic RWE sandbox: replicate checkpoints (regenerable, keyed by code version) and archived runs
+sandbox_rwe/results/runs/
+sandbox_rwe/results/stale/
