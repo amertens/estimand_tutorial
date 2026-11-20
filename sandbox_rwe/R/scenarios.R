@@ -32,6 +32,10 @@ scenario_params <- function(name, base = readRDS(rwe_path("sandbox_rwe/results/p
     return(fit_switching(p, tg$switch_12m, tg$switch_36m))
   }
   if (name == "d2d_common_outcome") return(fit_h0(p, 0.10))
+  # Supplementary: loss to follow-up 5 times as fast once measured eGFR falls below 60, so it
+  # depends on the post-baseline kidney function that also drives the event (informative
+  # given baseline covariates). Built to make informative censoring visible (review A12).
+  if (name == "d2e_informative_ltfu") { p$ltfu_low60 <- log(5); return(p) }
   if (name == "s1_tdf_susceptibility") {
     p <- scenario_params("d2c_renal_switch", base, tg); p$sus_prev <- 0.1; p$sus_mult <- 5
     return(fit_switching(p, tg$switch_12m, tg$switch_36m))

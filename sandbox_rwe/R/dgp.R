@@ -152,7 +152,20 @@ sim_rwe <- function(N, p = rwe_params(), arm = c("observed", "tdf", "etv"),
   T_sus <- if (sustained) event_time(b, A, rep(Inf, N), E_sus, p) else NA_real_
 
   if (censoring) {
-    ltfu <- ltfu / (p$ltfu_rate * exp(p$ltfu_age * (b$age - p$age_mean) + p$ltfu_A * A))
+    rate <- p$ltfu_rate * exp(p$ltfu_age * (b$age - p$age_mean) + p$ltfu_A * A)
+    if (!is.null(p$ltfu_low60) && p$ltfu_low60 != 0) {
+      # Informative loss to follow-up (supplementary scenario): the hazard is multiplied by
+      # exp(ltfu_low60) from the first visit with measured eGFR below 60 on the patient's
+      # actual drug path. Same unit draw inverted through the two-piece hazard, so no extra
+      # random numbers are used. Absent or 0 in every other scenario.
+      m_obs <- b$egfr0 + b$slope * vis / 365 - A * b$dip_mult * tdf_dip(vis, leave, p) + eps
+      low <- m_obs < 60
+      t_low <- ifelse(rowSums(low) > 0, vis[cbind(seq_len(N), max.col(low, ties.method = "first"))], Inf)
+      k <- exp(p$ltfu_low60)
+      ltfu <- ifelse(ltfu / rate <= t_low, ltfu / rate, t_low + (ltfu - rate * t_low) / (rate * k))
+    } else {
+      ltfu <- ltfu / rate
+    }
   } else {
     ltfu <- rep(Inf, N); admin <- rep(Inf, N)
   }

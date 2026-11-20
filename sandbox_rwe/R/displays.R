@@ -6,7 +6,7 @@ STRAT_LABEL <- c(treatment_policy = "Treatment policy", sustained_use = "Sustain
 SCEN_LABEL <- c(base = "Base case", c1_ph_rare_switch = "Proportional hazards, rare switching",
                 d2a_ph = "Proportional hazards", d2b_heavy_ltfu = "Heavier loss to follow-up",
                 d2c_renal_switch = "Renal-driven switching", d2d_common_outcome = "Common outcome",
-                s1_tdf_susceptibility = "Susceptibility to TDF nephrotoxicity (supplement)")
+                s1_tdf_susceptibility = "Susceptibility to the nephrotoxicity of Drug A (supplement)")
 
 make_table1 <- function(perf, truth) {
   b <- perf[perf$scenario == "base", ]

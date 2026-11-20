@@ -210,7 +210,7 @@ run_scenario <- function(scenario, reps, set, cores = 6, root = rwe_path("sandbo
     cl <- parallel::makeCluster(cores)
     res <- tryCatch({
       parallel::clusterEvalQ(cl, {
-        setwd("C:/Users/andre/OneDrive/Documents/estimand_tutorial")
+        setwd(Sys.getenv("RWE_ROOT", "C:/Users/andre/OneDrive/Documents/estimand_tutorial"))
         for (f in list.files("sandbox_rwe/R", pattern = "\\.R$", full.names = TRUE)) source(f)
       })
       parallel::parLapply(cl, ch, one, s = scenario, st = set, rt = root, cv = cv)
