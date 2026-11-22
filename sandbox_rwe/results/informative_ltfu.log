@@ -1,0 +1,18 @@
+Warning message:
+package 'dplyr' was built under R version 4.4.3 
+            strategy      rd    rr base_rd
+1   treatment_policy 0.01914 1.498 0.01914
+2      sustained_use 0.02134 1.555 0.02134
+3 while_on_treatment 0.01397 1.393 0.01397
+4          composite 0.12625 1.661 0.12625
+5  principal_stratum 0.01891 1.555 0.01891
+Warning message:
+package 'dplyr' was built under R version 4.4.3 
+            strategy      rd    rr base_rd
+1   treatment_policy 0.01914 1.498 0.01914
+2      sustained_use 0.02134 1.555 0.02134
+3 while_on_treatment 0.01397 1.393 0.01397
+4          composite 0.12625 1.661 0.12625
+5  principal_stratum 0.01891 1.555 0.01891
+rows: 2400  failed: 0 
+done in 1.7 h
