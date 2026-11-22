@@ -36,6 +36,12 @@ scenario_params <- function(name, base = readRDS(rwe_path("sandbox_rwe/results/p
   # depends on the post-baseline kidney function that also drives the event (informative
   # given baseline covariates). Built to make informative censoring visible (review A12).
   if (name == "d2e_informative_ltfu") { p$ltfu_low60 <- log(5); return(p) }
+  # Supplementary, stronger (Andrew 2026-11-22, after d2e changed no analysis's bias): loss to
+  # follow-up 30 times as fast from the first visit with a measured eGFR decline of 10% or more
+  # from baseline, a trigger reached in the first year by about 36% of Drug A and 8% of Drug B
+  # starters (pilot, scratchpad pilot_ltfu2.R). Run on the base case's seeds (run/75), so the
+  # change from the base case is paired.
+  if (name == "d2f_informative_ltfu_strong") { p$ltfu_low60 <- log(30); p$ltfu_dec_thr <- 0.10; return(p) }
   if (name == "s1_tdf_susceptibility") {
     p <- scenario_params("d2c_renal_switch", base, tg); p$sus_prev <- 0.1; p$sus_mult <- 5
     return(fit_switching(p, tg$switch_12m, tg$switch_36m))

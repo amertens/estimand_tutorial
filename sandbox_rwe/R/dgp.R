@@ -159,7 +159,9 @@ sim_rwe <- function(N, p = rwe_params(), arm = c("observed", "tdf", "etv"),
       # actual drug path. Same unit draw inverted through the two-piece hazard, so no extra
       # random numbers are used. Absent or 0 in every other scenario.
       m_obs <- b$egfr0 + b$slope * vis / 365 - A * b$dip_mult * tdf_dip(vis, leave, p) + eps
-      low <- m_obs < 60
+      # ltfu_dec_thr (optional): the trigger is a measured decline of at least this fraction
+      # from baseline eGFR instead of measured eGFR below 60
+      low <- if (is.null(p$ltfu_dec_thr)) m_obs < 60 else (b$egfr0 - m_obs) / b$egfr0 >= p$ltfu_dec_thr
       t_low <- ifelse(rowSums(low) > 0, vis[cbind(seq_len(N), max.col(low, ties.method = "first"))], Inf)
       k <- exp(p$ltfu_low60)
       ltfu <- ifelse(ltfu / rate <= t_low, ltfu / rate, t_low + (ltfu - rate * t_low) / (rate * k))
