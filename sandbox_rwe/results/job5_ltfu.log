@@ -1,0 +1,35 @@
+Warning message:
+package 'dplyr' was built under R version 4.4.3 
+            strategy      rd    rr base_rd
+1   treatment_policy 0.01914 1.498 0.01914
+2      sustained_use 0.02134 1.555 0.02134
+3 while_on_treatment 0.01397 1.393 0.01397
+4          composite 0.12625 1.661 0.12625
+5  principal_stratum 0.01891 1.555 0.01891
+11-22 14:47 - ltfu : 200 cohorts to run
+11-22 14:53 - done 8 of 200 
+11-22 15:00 - done 16 of 200 
+11-22 15:06 - done 24 of 200 
+11-22 15:12 - done 32 of 200 
+11-22 15:18 - done 40 of 200 
+11-22 15:25 - done 48 of 200 
+11-22 15:31 - done 56 of 200 
+11-22 15:37 - done 64 of 200 
+11-22 15:43 - done 72 of 200 
+11-22 15:50 - done 80 of 200 
+11-22 15:57 - done 88 of 200 
+11-22 16:04 - done 96 of 200 
+11-22 16:10 - done 104 of 200 
+11-22 16:18 - done 112 of 200 
+11-22 16:24 - done 120 of 200 
+11-22 16:31 - done 128 of 200 
+11-22 16:38 - done 136 of 200 
+11-22 16:44 - done 144 of 200 
+11-22 16:50 - done 152 of 200 
+11-22 16:57 - done 160 of 200 
+11-22 17:03 - done 168 of 200 
+11-22 17:11 - done 176 of 200 
+11-22 17:17 - done 184 of 200 
+11-22 17:24 - done 192 of 200 
+11-22 17:31 - done 200 of 200 
+rows: 2400  failed: 0 
