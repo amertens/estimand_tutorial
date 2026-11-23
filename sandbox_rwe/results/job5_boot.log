@@ -1,0 +1,17 @@
+Warning message:
+package 'dplyr' was built under R version 4.4.3 
+11-22 14:40 - boot : 200 cohorts to run
+11-22 14:53 - done 16 of 200 
+11-22 15:08 - done 32 of 200 
+11-22 15:22 - done 48 of 200 
+11-22 15:37 - done 64 of 200 
+11-22 15:52 - done 80 of 200 
+11-22 16:08 - done 96 of 200 
+11-22 16:26 - done 112 of 200 
+11-22 16:43 - done 128 of 200 
+11-22 17:03 - done 144 of 200 
+11-22 17:21 - done 160 of 200 
+11-22 17:38 - done 176 of 200 
+11-22 17:52 - done 192 of 200 
+11-22 17:59 - done 200 of 200 
+rows: 400  fewer than 95 good samples: 0 
